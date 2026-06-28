@@ -3,6 +3,25 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-06-28
+
+### Added
+- Keyboard routing toggle. **Direct** (default) plays the chosen part directly;
+  **Over MIDI** layers the keyboard through the MIDI router on the part's
+  channel — over the live MIDI signal — so channel routing and the drum-map
+  apply, exactly like an external controller.
+
+### Fixed
+- **(P2)** Saved synth/bass pan & gate were sent to the poly-synth worklet
+  before it loaded (it loads async), so they read as restored in the UI but
+  were inaudible after a reload. They're now re-applied once the worklet is
+  ready.
+- **(P2)** The computer keyboard's explicit target was re-resolved through MIDI
+  channels, so duplicate channel assignments could route to the wrong part and
+  drum-map overrides could make "A = kick" play another voice. In the default
+  Direct routing the target part is now honored exactly, bypassing channel
+  resolution and the drum-map.
+
 ## [0.2.0] — 2026-06-28
 
 ### Added

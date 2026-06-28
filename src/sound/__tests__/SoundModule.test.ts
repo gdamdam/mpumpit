@@ -40,6 +40,20 @@ describe("SoundModule — lifecycle & pre-ready queue", () => {
     expect(engine.callsTo("liveNoteOn").at(-1)).toEqual({ method: "liveNoteOn", args: [PART_TO_AUDIO_CH.bass, 40, 90] });
   });
 
+  it("re-applies synth/bass worklet settings AFTER the worklet loads (P2)", async () => {
+    // Pan/gate for synth/bass are sent to the poly-synth worklet, which doesn't
+    // exist during applyAll(); they must be re-sent once it's ready.
+    const { engine, sm } = make();
+    await sm.initialize();
+    const calls = engine.calls;
+    const resumeIdx = calls.findIndex((c) => c.method === "resume");
+    expect(resumeIdx).toBeGreaterThanOrEqual(0);
+    const panAfter = calls.some((c, i) => i > resumeIdx && c.method === "setChannelPan" && c.args[0] === 0);
+    const gateAfter = calls.some((c, i) => i > resumeIdx && c.method === "setChannelGate" && c.args[0] === 0);
+    expect(panAfter).toBe(true);
+    expect(gateAfter).toBe(true);
+  });
+
   it("whenReady resolves after initialize", async () => {
     const { sm } = make();
     const p = sm.whenReady();

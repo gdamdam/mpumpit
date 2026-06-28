@@ -103,6 +103,32 @@ describe("App — end to end with mocked Web MIDI + Web Audio", () => {
     expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([9, 36, 100]);
   });
 
+  it("direct keyboard honors the explicit target; Over MIDI layers through routing (P2)", async () => {
+    // A drum-map override: incoming MIDI note 36 → 38. Direct routing must NOT
+    // apply it (A stays kick); Over-MIDI routing must (it goes through routing).
+    localStorage.setItem("mpumpit.settings.v1", JSON.stringify({
+      soundState: { drumMap: { 36: 38 } },
+      channels: { synth: 1, bass: 2, drums: 10 },
+      selectedInputId: "all",
+    }));
+    render(<App createEngine={() => engine} />);
+    await screen.findByRole("option", { name: "Test Controller" });
+    fireEvent.click(screen.getByRole("button", { name: /Start Audio/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Start Audio/i })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Keys/i }));
+    fireEvent.change(screen.getByLabelText("Keyboard target part"), { target: { value: "drums" } });
+
+    // Direct (default): 'a' = kick (36) reaches drums directly; drum-map skipped.
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); });
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([9, 36, 100]);
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keyup", { key: "a" })); });
+
+    // Over MIDI: same key now flows through routing + drum-map → voice 38.
+    fireEvent.click(screen.getByRole("button", { name: "Over MIDI" }));
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); });
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([9, 38, 100]);
+  });
+
   it("persists settings (channel edit) across remounts", async () => {
     const { unmount } = render(<App createEngine={() => engine} />);
     await screen.findByRole("option", { name: "Test Controller" });

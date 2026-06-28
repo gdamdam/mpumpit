@@ -28,6 +28,8 @@ export function App({ createEngine }: AppProps = {}) {
   const routerRef = useRef<MidiRouter | null>(null);
   const qwertyRef = useRef<QwertyKeyboard | null>(null);
   const qwertyTargetRef = useRef<Part>("synth");
+  const qwertyRouteRef = useRef<"direct" | "midi">("direct");
+  const flashRef = useRef<(part: Part) => void>(() => {});
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimers = useRef<Partial<Record<Part, ReturnType<typeof setTimeout>>>>({});
 
@@ -43,6 +45,7 @@ export function App({ createEngine }: AppProps = {}) {
   const [showSettings, setShowSettings] = useState(false);
   const [qwertyOn, setQwertyOn] = useState(false);
   const [qwertyTarget, setQwertyTarget] = useState<Part>("synth");
+  const [qwertyOverMidi, setQwertyOverMidi] = useState(false);
 
   // ── one-time setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -66,6 +69,7 @@ export function App({ createEngine }: AppProps = {}) {
         setMidiBlink(false);
       }, 140);
     };
+    flashRef.current = flash; // so direct-routed keyboard notes blink too
     const router = new MidiRouter({
       sink: sm,
       channels: settings?.channels,
@@ -83,20 +87,36 @@ export function App({ createEngine }: AppProps = {}) {
     routerRef.current = router;
     setSelectedInput(router.getSelectedInputId());
 
-    // Computer-keyboard input. Feeds the router as a synthetic MIDI input on the
-    // target part's current channel, so ownership/panic/activity all apply.
+    // Computer-keyboard input. Two routings:
+    //  • "direct"  — note → the chosen part directly (bypasses channel routing
+    //    and the drum-map), so the explicit target is always honored and "A =
+    //    kick" stays kick regardless of remaps or duplicate channel numbers.
+    //  • "midi"    — injected through the router as a synthetic input on the
+    //    part's channel, layering OVER the live MIDI signal exactly like an
+    //    external controller (channel routing + drum-map apply).
     const qwerty = new QwertyKeyboard({
       onNoteOn: (note, vel) => {
-        const r = routerRef.current;
-        if (!r) return;
-        const ch = r.getChannels()[qwertyTargetRef.current];
-        r.handleMessage("qwerty-keyboard", [0x90 | (ch - 1), note, vel]);
+        const part = qwertyTargetRef.current;
+        if (qwertyRouteRef.current === "midi") {
+          const r = routerRef.current;
+          if (!r) return;
+          const ch = r.getChannels()[part];
+          r.handleMessage("qwerty-keyboard", [0x90 | (ch - 1), note, vel]);
+        } else {
+          smRef.current?.noteOn(part, note, vel);
+          flashRef.current(part);
+        }
       },
       onNoteOff: (note) => {
-        const r = routerRef.current;
-        if (!r) return;
-        const ch = r.getChannels()[qwertyTargetRef.current];
-        r.handleMessage("qwerty-keyboard", [0x80 | (ch - 1), note, 0]);
+        const part = qwertyTargetRef.current;
+        if (qwertyRouteRef.current === "midi") {
+          const r = routerRef.current;
+          if (!r) return;
+          const ch = r.getChannels()[part];
+          r.handleMessage("qwerty-keyboard", [0x80 | (ch - 1), note, 0]);
+        } else {
+          smRef.current?.noteOff(part, note);
+        }
       },
       onChange: () => bump(),
     });
@@ -187,6 +207,11 @@ export function App({ createEngine }: AppProps = {}) {
     qwertyRef.current?.setDrumMode(part === "drums"); // keys become drum pads
     setQwertyTarget(part);
   };
+  const changeQwertyRoute = (overMidi: boolean) => {
+    qwertyRef.current?.releaseAll(); // release before switching the routing path
+    qwertyRouteRef.current = overMidi ? "midi" : "direct";
+    setQwertyOverMidi(overMidi);
+  };
   const panic = (hard: boolean) => { qwertyRef.current?.releaseAll(); if (hard) { router?.releaseAll(); sm?.panic(true); } else { router?.panic(); } };
 
   const onDrumMapChange = (overrides: Record<number, number>) => {
@@ -244,6 +269,11 @@ export function App({ createEngine }: AppProps = {}) {
             <Select value={qwertyTarget} options={PARTS as readonly string[]}
               onChange={(p) => changeQwertyTarget(p as Part)} title="Keyboard target part"
               ariaLabel="Keyboard target part" />
+            <button type="button" className={`ctl-toggle${qwertyOverMidi ? " is-on" : ""}`} aria-pressed={qwertyOverMidi}
+              onClick={() => changeQwertyRoute(!qwertyOverMidi)}
+              title="Over MIDI: layer the keyboard through MIDI channel routing (so channels & drum-map apply). Off: play the part directly.">
+              Over MIDI
+            </button>
             <span className="kbd-info">
               {qwertyTarget === "drums"
                 ? `Pads · Vel ${qwertyRef.current?.getVelocity() ?? 100}`

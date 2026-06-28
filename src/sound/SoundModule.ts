@@ -167,6 +167,11 @@ export class SoundModule {
       this.degraded = true;
       this.warning = "Synth & bass are still initializing — notes may be silent until the worklet finishes loading.";
     }
+    // Synth/bass pan, gate, preset and volume are routed to the poly-synth
+    // worklet, but applyAll() ran before it existed (it loads async), so those
+    // messages were dropped. Re-send them now the worklet is here, or the saved
+    // values show in the UI but stay inaudible after a reload.
+    if (engine.isPolySynthReady()) this.applyAfterWorklet();
     this.status = "ready";
     this.flushPending();
     this.readyResolvers.forEach((r) => r());
@@ -617,6 +622,17 @@ export class SoundModule {
   private applyStrips(): void {
     for (const part of ["synth", "bass", "drums"] as Part[]) {
       // EQ first — it self-heals the channel bus, ensuring HPF/pan/gate apply.
+      for (const id of this.stripEffectsFor(part)) this.applyStripSection(part, id);
+    }
+  }
+
+  // Re-send the synth/bass settings that the poly-synth worklet handles, once
+  // it has loaded (drums don't use the worklet, so they're unaffected).
+  private applyAfterWorklet(): void {
+    if (!this.engine) return;
+    for (const part of ["synth", "bass"] as Part[]) {
+      this.applyPreset(part);
+      this.engine.setChannelVolume(PART_TO_AUDIO_CH[part], this.state.parts[part].volume);
       for (const id of this.stripEffectsFor(part)) this.applyStripSection(part, id);
     }
   }
