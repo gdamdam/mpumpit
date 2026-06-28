@@ -14,7 +14,9 @@ import { SettingsPanel } from "./components/SettingsPanel";
 
 const PART_LABEL: Record<Part, string> = { synth: "SYNTH", bass: "BASS", drums: "DRUMS" };
 
-const fmtSigned = (n: number) => (n > 0 ? `+${n}` : String(n));
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+// Scientific pitch notation (MIDI 60 = C4, A440 = A4).
+const noteName = (n: number) => `${NOTE_NAMES[((n % 12) + 12) % 12]}${Math.floor(n / 12) - 1}`;
 
 export interface AppProps {
   /** Test seam: override the audio engine. Defaults to a real AudioPort. */
@@ -106,13 +108,23 @@ export function App({ createEngine }: AppProps = {}) {
       setInputs(router.listInputs());
     });
 
-    const isTypingTarget = () => {
-      const tag = (document.activeElement as HTMLElement | null)?.tagName;
-      return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+    // Only genuine free-text entry should swallow note keys. Number inputs and
+    // <select> menus are NOT text entry, so when the keyboard is on its keys
+    // take over from them — no overlapping shortcuts. Modifier combos (copy,
+    // paste, browser shortcuts) and real text fields still pass through.
+    const isTextEntry = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      if (el.isContentEditable || el.tagName === "TEXTAREA") return true;
+      if (el.tagName === "INPUT") {
+        const t = (el as HTMLInputElement).type;
+        return ["text", "search", "email", "url", "tel", "password"].includes(t);
+      }
+      return false;
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") { qwerty.releaseAll(); router.panic(); return; }
-      if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget()) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || isTextEntry()) return;
       if (qwerty.handleKeyDown(e.key, e.repeat)) e.preventDefault();
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -172,6 +184,7 @@ export function App({ createEngine }: AppProps = {}) {
   const changeQwertyTarget = (part: Part) => {
     qwertyRef.current?.releaseAll(); // notes were on the old part's channel
     qwertyTargetRef.current = part;
+    qwertyRef.current?.setDrumMode(part === "drums"); // keys become drum pads
     setQwertyTarget(part);
   };
   const panic = (hard: boolean) => { qwertyRef.current?.releaseAll(); if (hard) { router?.releaseAll(); sm?.panic(true); } else { router?.panic(); } };
@@ -229,11 +242,18 @@ export function App({ createEngine }: AppProps = {}) {
           <>
             <span className="ctl-label">plays</span>
             <Select value={qwertyTarget} options={PARTS as readonly string[]}
-              onChange={(p) => changeQwertyTarget(p as Part)} title="Keyboard target part" />
+              onChange={(p) => changeQwertyTarget(p as Part)} title="Keyboard target part"
+              ariaLabel="Keyboard target part" />
             <span className="kbd-info">
-              Oct {fmtSigned(qwertyRef.current?.getOctaveShift() ?? 0)} · Vel {qwertyRef.current?.getVelocity() ?? 100}
+              {qwertyTarget === "drums"
+                ? `Pads · Vel ${qwertyRef.current?.getVelocity() ?? 100}`
+                : `Root ${noteName(qwertyRef.current?.getRootNote() ?? 48)} · Vel ${qwertyRef.current?.getVelocity() ?? 100}`}
             </span>
-            <span className="kbd-hint">A–; notes · Z/X octave · C/V velocity</span>
+            <span className="kbd-hint">
+              {qwertyTarget === "drums"
+                ? "A kick · S rim · D snare · F/G hats · H–; perc · C/V vel"
+                : "A–; notes · Z/X octave · C/V velocity"}
+            </span>
           </>
         )}
       </div>

@@ -36,12 +36,13 @@ export function Select(props: {
   options: readonly string[];
   onChange: (v: string) => void;
   title?: string;
+  ariaLabel?: string;
 }) {
-  const { label, value, options, onChange, title } = props;
+  const { label, value, options, onChange, title, ariaLabel } = props;
   return (
     <label className="ctl-select" title={title}>
       {label && <span className="ctl-label">{label}</span>}
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
+      <select value={value} aria-label={ariaLabel} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => (
           <option key={o} value={o}>{o}</option>
         ))}

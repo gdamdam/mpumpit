@@ -3,6 +3,25 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-06-28
+
+### Added
+- **Computer-keyboard drum mode** — when the keyboard targets the drums part,
+  the white-key row plays mpump's 10 drum voices (A = kick, S = rim, D = snare,
+  F/G = hats, …) instead of chromatic pitches.
+
+### Changed
+- Keyboard default octave lowered to **C3** (was middle C), and the readout now
+  shows the real root note (e.g. `Root C3`) in scientific pitch, not an
+  octave-shift counter.
+- When the computer keyboard is enabled, its note keys take precedence over a
+  focused `<select>`/number field — no overlapping shortcuts swallow notes.
+
+### Fixed
+- Retargeting the keyboard to **bass** or **drums** now works (it previously
+  appeared stuck on synth because a focused menu swallowed the keys and drum
+  notes were out of the playable range).
+
 ## [0.1.0] — 2026-06-28
 
 Initial release.

@@ -14,6 +14,13 @@ export const QWERTY_SEMITONES: Record<string, number> = {
   k: 12, o: 13, l: 14, p: 15, ";": 16,
 };
 
+// Drum-pad layout: the white-key row triggers mpump's 10 drum voices in order
+// (kick, rim, snare, hats, cowbell, crash, clap, ride, cowbell). Used when the
+// keyboard targets the drums part, where chromatic pitches make no sense.
+export const QWERTY_DRUM_KEYS: Record<string, number> = {
+  a: 36, s: 37, d: 38, f: 42, g: 46, h: 47, j: 49, k: 50, l: 51, ";": 56,
+};
+
 const MIN_OCTAVE_SHIFT = -4;
 const MAX_OCTAVE_SHIFT = 4;
 const VELOCITY_STEP = 12;
@@ -28,6 +35,7 @@ export interface QwertyOptions {
 
 export class QwertyKeyboard {
   private enabled = false;
+  private drumMode = false;
   private octaveShift = 0;
   private velocity = 100;
   private readonly baseNote: number;
@@ -36,12 +44,15 @@ export class QwertyKeyboard {
   private sounding = new Map<string, number>();
 
   constructor(private readonly opts: QwertyOptions) {
-    this.baseNote = opts.baseNote ?? 60;
+    this.baseNote = opts.baseNote ?? 48; // C3 — a comfortable mid-low default
   }
 
   isEnabled(): boolean { return this.enabled; }
+  isDrumMode(): boolean { return this.drumMode; }
   getOctaveShift(): number { return this.octaveShift; }
   getVelocity(): number { return this.velocity; }
+  /** MIDI note of the leftmost ('a') key at the current octave (melodic mode). */
+  getRootNote(): number { return this.baseNote + this.octaveShift * 12; }
 
   setEnabled(on: boolean): void {
     if (on === this.enabled) return;
@@ -50,7 +61,19 @@ export class QwertyKeyboard {
     this.opts.onChange?.();
   }
 
+  /** In drum mode the keys trigger drum voices, not chromatic pitches. */
+  setDrumMode(on: boolean): void {
+    if (on === this.drumMode) return;
+    this.releaseAll();
+    this.drumMode = on;
+    this.opts.onChange?.();
+  }
+
   private noteFor(key: string): number | null {
+    if (this.drumMode) {
+      const drum = QWERTY_DRUM_KEYS[key];
+      return drum === undefined ? null : drum;
+    }
     const semi = QWERTY_SEMITONES[key];
     if (semi === undefined) return null;
     const note = this.baseNote + this.octaveShift * 12 + semi;
@@ -61,8 +84,8 @@ export class QwertyKeyboard {
   handleKeyDown(key: string, repeat = false): boolean {
     if (!this.enabled) return false;
     const k = key.toLowerCase();
-    if (k === "z") { this.shiftOctave(-1); return true; }
-    if (k === "x") { this.shiftOctave(1); return true; }
+    if (k === "z") { if (!this.drumMode) this.shiftOctave(-1); return true; }
+    if (k === "x") { if (!this.drumMode) this.shiftOctave(1); return true; }
     if (k === "c") { this.shiftVelocity(-VELOCITY_STEP); return true; }
     if (k === "v") { this.shiftVelocity(VELOCITY_STEP); return true; }
     if (!(k in QWERTY_SEMITONES)) return false;

@@ -76,10 +76,31 @@ describe("App — end to end with mocked Web MIDI + Web Audio", () => {
     fireEvent.click(screen.getByRole("button", { name: /Keys/i })); // enable QWERTY → synth
 
     await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); });
-    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([0, 60, 100]); // 'a' = middle C → synth
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([0, 48, 100]); // 'a' = C3 → synth
 
     await act(async () => { window.dispatchEvent(new KeyboardEvent("keyup", { key: "a" })); });
-    expect(engine.callsTo("liveNoteOff").map((c) => c.args)).toContainEqual([0, 60]);
+    expect(engine.callsTo("liveNoteOff").map((c) => c.args)).toContainEqual([0, 48]);
+  });
+
+  it("retargets the keyboard to bass and drums (and keys win over a focused select)", async () => {
+    render(<App createEngine={() => engine} />);
+    await screen.findByRole("option", { name: "Test Controller" });
+    fireEvent.click(screen.getByRole("button", { name: /Start Audio/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Start Audio/i })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Keys/i }));
+
+    const target = screen.getByLabelText("Keyboard target part");
+
+    // Bass: melodic C3 (48) on the bass channel (engine ch 1).
+    fireEvent.change(target, { target: { value: "bass" } });
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); });
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([1, 48, 100]);
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keyup", { key: "a" })); });
+
+    // Drums: 'a' becomes the kick (36) on the drums channel (engine ch 9).
+    fireEvent.change(target, { target: { value: "drums" } });
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); });
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([9, 36, 100]);
   });
 
   it("persists settings (channel edit) across remounts", async () => {

@@ -71,4 +71,26 @@ describe("QwertyKeyboard (Ableton layout)", () => {
     expect(QWERTY_SEMITONES.a).toBe(0);
     expect(QWERTY_SEMITONES.j).toBe(11);
   });
+
+  it("getRootNote reflects base + octave shift", () => {
+    expect(kb.getRootNote()).toBe(60);
+    kb.handleKeyDown("x"); // octave up
+    expect(kb.getRootNote()).toBe(72);
+  });
+
+  it("drum mode maps the white row to drum voices and ignores octave", () => {
+    kb.setDrumMode(true);
+    kb.handleKeyDown("a"); // kick
+    kb.handleKeyDown("d"); // snare
+    kb.handleKeyDown("z"); // octave shift — no-op in drum mode
+    kb.handleKeyDown("s"); // rim (unchanged by z)
+    expect(ons.map(([n]) => n)).toEqual([36, 38, 37]);
+    expect(kb.isDrumMode()).toBe(true);
+  });
+
+  it("drum mode ignores chromatic black keys", () => {
+    kb.setDrumMode(true);
+    expect(kb.handleKeyDown("w")).toBe(true); // consumed, but no voice
+    expect(ons).toHaveLength(0);
+  });
 });
