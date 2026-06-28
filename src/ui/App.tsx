@@ -4,6 +4,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { SoundModule, type EngineFactory, type SoundStatus } from "../sound/SoundModule";
 import { MidiRouter, ALL_INPUTS, type MidiInputInfo, type MidiPermissionState } from "../midi/router";
+import { QwertyKeyboard } from "../midi/qwerty";
 import { PARTS, type Part } from "../midi/types";
 import type { FxTarget } from "../sound/types";
 import { loadSettings, saveSettings, clearSettings } from "../state/persistence";
@@ -13,6 +14,8 @@ import { SettingsPanel } from "./components/SettingsPanel";
 
 const PART_LABEL: Record<Part, string> = { synth: "SYNTH", bass: "BASS", drums: "DRUMS" };
 
+const fmtSigned = (n: number) => (n > 0 ? `+${n}` : String(n));
+
 export interface AppProps {
   /** Test seam: override the audio engine. Defaults to a real AudioPort. */
   createEngine?: EngineFactory;
@@ -21,6 +24,8 @@ export interface AppProps {
 export function App({ createEngine }: AppProps = {}) {
   const smRef = useRef<SoundModule | null>(null);
   const routerRef = useRef<MidiRouter | null>(null);
+  const qwertyRef = useRef<QwertyKeyboard | null>(null);
+  const qwertyTargetRef = useRef<Part>("synth");
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimers = useRef<Partial<Record<Part, ReturnType<typeof setTimeout>>>>({});
 
@@ -34,6 +39,8 @@ export function App({ createEngine }: AppProps = {}) {
   const [midiBlink, setMidiBlink] = useState(false);
   const [openFx, setOpenFx] = useState<FxTarget | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [qwertyOn, setQwertyOn] = useState(false);
+  const [qwertyTarget, setQwertyTarget] = useState<Part>("synth");
 
   // ── one-time setup ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -74,24 +81,57 @@ export function App({ createEngine }: AppProps = {}) {
     routerRef.current = router;
     setSelectedInput(router.getSelectedInputId());
 
+    // Computer-keyboard input. Feeds the router as a synthetic MIDI input on the
+    // target part's current channel, so ownership/panic/activity all apply.
+    const qwerty = new QwertyKeyboard({
+      onNoteOn: (note, vel) => {
+        const r = routerRef.current;
+        if (!r) return;
+        const ch = r.getChannels()[qwertyTargetRef.current];
+        r.handleMessage("qwerty-keyboard", [0x90 | (ch - 1), note, vel]);
+      },
+      onNoteOff: (note) => {
+        const r = routerRef.current;
+        if (!r) return;
+        const ch = r.getChannels()[qwertyTargetRef.current];
+        r.handleMessage("qwerty-keyboard", [0x80 | (ch - 1), note, 0]);
+      },
+      onChange: () => bump(),
+    });
+    qwertyRef.current = qwerty;
+
     const unsub = sm.subscribe(() => { bump(); schedulePersist(); });
     void router.enable().then((perm) => {
       setPermission(perm);
       setInputs(router.listInputs());
     });
 
-    const onHide = () => router.panic();
-    const onVisibility = () => { if (document.hidden) router.panic(); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") router.panic(); };
+    const isTypingTarget = () => {
+      const tag = (document.activeElement as HTMLElement | null)?.tagName;
+      return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { qwerty.releaseAll(); router.panic(); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget()) return;
+      if (qwerty.handleKeyDown(e.key, e.repeat)) e.preventDefault();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (qwerty.handleKeyUp(e.key)) e.preventDefault();
+    };
+    const onHide = () => { qwerty.releaseAll(); router.panic(); };
+    const onVisibility = () => { if (document.hidden) { qwerty.releaseAll(); router.panic(); } };
     window.addEventListener("pagehide", onHide);
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
 
     return () => {
       window.removeEventListener("pagehide", onHide);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
       if (persistTimer.current) clearTimeout(persistTimer.current);
+      qwerty.releaseAll();
       unsub();
       router.dispose();
       sm.dispose();
@@ -128,6 +168,13 @@ export function App({ createEngine }: AppProps = {}) {
     sm?.setPreset(part, name);
   };
   const toggleFx = (target: FxTarget) => setOpenFx((cur) => (cur === target ? null : target));
+  const toggleQwerty = (on: boolean) => { setQwertyOn(on); qwertyRef.current?.setEnabled(on); };
+  const changeQwertyTarget = (part: Part) => {
+    qwertyRef.current?.releaseAll(); // notes were on the old part's channel
+    qwertyTargetRef.current = part;
+    setQwertyTarget(part);
+  };
+  const panic = (hard: boolean) => { qwertyRef.current?.releaseAll(); if (hard) { router?.releaseAll(); sm?.panic(true); } else { router?.panic(); } };
 
   const onDrumMapChange = (overrides: Record<number, number>) => {
     sm?.setDrumMap(overrides);
@@ -150,7 +197,7 @@ export function App({ createEngine }: AppProps = {}) {
       <div className="face-top">
         <div className="brand">
           <span className="brand-name">mpumpit</span>
-          <span className="brand-sub">MIDI sound module</span>
+          <span className="brand-sub">MIDI sound module · v{__APP_VERSION__}</span>
         </div>
         <div className="bpm">
           <span className="ctl-label">BPM</span>
@@ -172,6 +219,28 @@ export function App({ createEngine }: AppProps = {}) {
         onSelect={(id) => router?.setSelectedInput(id)}
         onRetry={() => void router?.enable().then((p) => { setPermission(p); setInputs(router.listInputs()); })}
       />
+
+      <div className="kbd-bar">
+        <button type="button" className={`ctl-toggle${qwertyOn ? " is-on" : ""}`} aria-pressed={qwertyOn}
+          onClick={() => toggleQwerty(!qwertyOn)} title="Play with your computer keyboard (Ableton layout)">
+          ⌨ Keys
+        </button>
+        {qwertyOn && (
+          <>
+            <span className="ctl-label">plays</span>
+            <Select value={qwertyTarget} options={PARTS as readonly string[]}
+              onChange={(p) => changeQwertyTarget(p as Part)} title="Keyboard target part" />
+            <span className="kbd-info">
+              Oct {fmtSigned(qwertyRef.current?.getOctaveShift() ?? 0)} · Vel {qwertyRef.current?.getVelocity() ?? 100}
+            </span>
+            <span className="kbd-hint">A–; notes · Z/X octave · C/V velocity</span>
+          </>
+        )}
+      </div>
+
+      {status === "ready" && sm?.isDegraded() && (
+        <div className="warn-bar" role="alert">{sm.getWarning()}</div>
+      )}
 
       {status !== "ready" && (
         <div className={`start-bar${audioError ? " has-error" : ""}`}>
@@ -227,8 +296,8 @@ export function App({ createEngine }: AppProps = {}) {
           aria-expanded={openFx === "master"} onClick={() => toggleFx("master")}>FX</button>
         <button type="button" className="panic"
           title="Click: all notes off · Double-click: hard mute (cut FX tails)"
-          onClick={() => router?.panic()}
-          onDoubleClick={() => { router?.releaseAll(); sm?.panic(true); }}>
+          onClick={() => panic(false)}
+          onDoubleClick={() => panic(true)}>
           PANIC
         </button>
       </div>
@@ -266,13 +335,22 @@ function MidiBay(props: {
     body = <span className="bay-msg">No MIDI inputs. Open IAC / loopMIDI / ALSA, or plug in a controller.</span>;
   } else if (permission === "granted") {
     const options = [ALL_INPUTS, ...connected.map((i) => i.id)];
-    const labelFor = (id: string) => (id === ALL_INPUTS ? "All MIDI inputs" : connected.find((i) => i.id === id)?.name ?? id);
-    const value = options.includes(selected) ? selected : ALL_INPUTS;
+    // If a saved selection isn't currently connected, surface it honestly as a
+    // disconnected option rather than silently showing "All MIDI inputs" while
+    // the router is actually attached to nothing (it reattaches on hot-plug).
+    const missingSelected = selected !== ALL_INPUTS && !options.includes(selected);
+    if (missingSelected) options.push(selected);
+    const labelFor = (id: string) => {
+      if (id === ALL_INPUTS) return "All MIDI inputs";
+      const found = connected.find((i) => i.id === id);
+      if (found) return found.name;
+      return id === selected ? "Saved device (disconnected)" : id;
+    };
     return (
       <div className="bay">
         <span className="ctl-label">MIDI IN</span>
         <Led state={led} title={led === "active" ? "MIDI activity" : connected.length ? "connected" : "idle"} />
-        <select className="bay-select" value={value} onChange={(e) => onSelect(e.target.value)} aria-label="MIDI input">
+        <select className="bay-select" value={selected} onChange={(e) => onSelect(e.target.value)} aria-label="MIDI input">
           {options.map((id) => <option key={id} value={id}>{labelFor(id)}</option>)}
         </select>
       </div>

@@ -32,6 +32,8 @@ export interface AudioEngine {
   getEffects(): EffectParams;
   setEffectOrder(order: EffectName[]): void;
   getEffectOrder(): EffectName[];
+  setSidechainDuck(on: boolean): void;
+  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean): void;
   setBpm(bpm: number): void;
   setChannelVolume(ch: number, v: number): void;
   setChannelEQ(ch: number, low: number, mid: number, high: number): void;
@@ -39,7 +41,10 @@ export interface AudioEngine {
   setChannelPan(ch: number, pan: number): void;
   setChannelGate(ch: number, on: boolean, rate: string, depth: number, shape: string): void;
   setVolume(v: number): void;
-  hasWorklets(): boolean;
+  stopAllDrums(): void;
+  flushFxTails(): void;
+  isPolySynthReady(): boolean;
+  didPolySynthFail(): boolean;
   resume(): Promise<void>;
   close(): void;
 }
@@ -56,8 +61,7 @@ export interface SoundModuleOptions {
   queueLimit?: number;
 }
 
-interface QueuedNote {
-  kind: "on" | "off";
+interface HeldNote {
   part: Part;
   note: number;
   velocity: number;
@@ -98,8 +102,14 @@ export class SoundModule {
   private initPromise: Promise<void> | null = null;
   private readyResolvers: Array<() => void> = [];
 
-  private pending: QueuedNote[] = [];
+  // Notes physically held when MIDI arrives before the engine is ready. Keyed
+  // by part:note, so a release simply forgets the note — no orphan Note Offs or
+  // ghost Note Ons can survive to playback. Only still-held notes replay on
+  // start. Bounded by queueLimit.
+  private pendingHeld = new Map<string, HeldNote>();
   private droppedEvents = 0;
+  private degraded = false;
+  private warning: string | null = null;
   private hardSilenceTimer: ReturnType<typeof setTimeout> | null = null;
 
   private listeners = new Set<() => void>();
@@ -146,10 +156,17 @@ export class SoundModule {
     this.engine = engine;
     this.applyAll();
     await engine.resume();
-    // Best-effort: give the (async, fire-and-forget) worklet load a moment so
-    // the first synth note is audible. The engine itself buffers pre-worklet
-    // notes, so we never block longer than this and never lose events.
-    await this.waitForWorklets(3000);
+    // Wait for the poly-synth worklet specifically (the only synth/bass voice).
+    // Holding here keeps the pre-ready queue alive so live notes are not dropped
+    // while it loads; we resolve as soon as it is ready, fails, or times out.
+    await this.waitForPolySynth(8000);
+    if (engine.didPolySynthFail()) {
+      this.degraded = true;
+      this.warning = "Synth & bass are unavailable — their audio worklet failed to load. Drums still work.";
+    } else if (!engine.isPolySynthReady()) {
+      this.degraded = true;
+      this.warning = "Synth & bass are still initializing — notes may be silent until the worklet finishes loading.";
+    }
     this.status = "ready";
     this.flushPending();
     this.readyResolvers.forEach((r) => r());
@@ -157,18 +174,30 @@ export class SoundModule {
     this.emit();
   }
 
-  private waitForWorklets(timeoutMs: number): Promise<void> {
+  private waitForPolySynth(timeoutMs: number): Promise<void> {
     const engine = this.engine;
     if (!engine) return Promise.resolve();
     return new Promise((resolve) => {
       const start = performance.now();
       const tick = () => {
         if (!this.engine) return resolve();
-        if (engine.hasWorklets() || performance.now() - start >= timeoutMs) return resolve();
+        if (engine.isPolySynthReady() || engine.didPolySynthFail() || performance.now() - start >= timeoutMs) {
+          return resolve();
+        }
         setTimeout(tick, 50);
       };
       tick();
     });
+  }
+
+  /** True when the engine started but the synth/bass worklet is unavailable. */
+  isDegraded(): boolean {
+    return this.degraded;
+  }
+
+  /** A human-readable warning when something is degraded, else null. */
+  getWarning(): string | null {
+    return this.warning;
   }
 
   async resume(): Promise<void> {
@@ -187,7 +216,7 @@ export class SoundModule {
       try { this.engine.close(); } catch { /* ignore */ }
     }
     this.engine = null;
-    this.pending = [];
+    this.pendingHeld.clear();
     this.initPromise = null;
     this.status = "disposed";
     this.emit();
@@ -197,10 +226,19 @@ export class SoundModule {
 
   noteOn(part: Part, note: number, velocity: number): void {
     if (this.status === "ready" && this.engine) {
+      this.unmuteIfSilenced();
       this.engine.liveNoteOn(PART_TO_AUDIO_CH[part], note, velocity);
       return;
     }
-    this.enqueue({ kind: "on", part, note, velocity });
+    if (this.status === "disposed") return;
+    const key = `${part}:${note}`;
+    // Bound the set of held notes; ignore (and count) new keys past the limit,
+    // but always allow re-pressing a key already held (no growth).
+    if (!this.pendingHeld.has(key) && this.pendingHeld.size >= this.queueLimit) {
+      this.droppedEvents++;
+      return;
+    }
+    this.pendingHeld.set(key, { part, note, velocity });
   }
 
   noteOff(part: Part, note: number): void {
@@ -208,51 +246,55 @@ export class SoundModule {
       this.engine.liveNoteOff(PART_TO_AUDIO_CH[part], note);
       return;
     }
-    this.enqueue({ kind: "off", part, note, velocity: 0 });
-  }
-
-  private enqueue(ev: QueuedNote): void {
     if (this.status === "disposed") return;
-    this.pending.push(ev);
-    if (this.pending.length > this.queueLimit) {
-      this.pending.shift();
-      this.droppedEvents++;
-    }
+    // Released before the engine was ready → simply forget it; it never plays.
+    this.pendingHeld.delete(`${part}:${note}`);
   }
 
   private flushPending(): void {
     if (!this.engine) return;
-    const events = this.pending;
-    this.pending = [];
-    for (const ev of events) {
-      if (ev.kind === "on") this.engine.liveNoteOn(PART_TO_AUDIO_CH[ev.part], ev.note, ev.velocity);
-      else this.engine.liveNoteOff(PART_TO_AUDIO_CH[ev.part], ev.note);
-    }
+    const held = [...this.pendingHeld.values()];
+    this.pendingHeld.clear();
+    for (const h of held) this.engine.liveNoteOn(PART_TO_AUDIO_CH[h.part], h.note, h.velocity);
   }
 
-  /** Count of note events dropped because the pre-ready queue overflowed. */
+  /** Count of note presses dropped because the pre-ready queue was full. */
   get droppedEventCount(): number {
     return this.droppedEvents;
   }
 
+  /** Number of notes still held, waiting for the engine to become ready. */
   get queuedEventCount(): number {
-    return this.pending.length;
+    return this.pendingHeld.size;
+  }
+
+  // A hard panic mutes the master; restore it on the next note so a held FX
+  // tail (already flushed) never re-emerges and the player isn't left silent.
+  private unmuteIfSilenced(): void {
+    if (this.hardSilenceTimer) {
+      clearTimeout(this.hardSilenceTimer);
+      this.hardSilenceTimer = null;
+      this.engine?.setVolume(this.state.masterVolume);
+    }
   }
 
   // ── Panic ────────────────────────────────────────────────────────────────
 
   /**
-   * Silence the whole engine. `hard` additionally mutes the master bus for a
-   * moment so reverb/delay tails are cut, then restores the master volume.
+   * Silence the whole engine: stop synth/bass voices AND active drum one-shots
+   * (drums are buffers that `allNotesOff` cannot stop). FX tails decay safely.
+   * `hard` also flushes the FX chain (discarding delay/reverb buffers so tails
+   * cannot return) under a brief master mute, then restores the master volume.
    */
   panic(hard = false): void {
-    this.pending = [];
+    this.pendingHeld.clear();
     if (!this.engine) return;
     this.engine.allNotesOff(PART_TO_AUDIO_CH.synth);
     this.engine.allNotesOff(PART_TO_AUDIO_CH.bass);
-    this.engine.allNotesOff(PART_TO_AUDIO_CH.drums);
+    this.engine.stopAllDrums();
     if (hard) {
       this.engine.setVolume(0);
+      this.engine.flushFxTails(); // rebuild delay/reverb nodes → tails gone
       if (this.hardSilenceTimer) clearTimeout(this.hardSilenceTimer);
       this.hardSilenceTimer = setTimeout(() => {
         this.hardSilenceTimer = null;
@@ -330,7 +372,19 @@ export class SoundModule {
 
   getAvailableEffects(target: FxTarget): string[] {
     if (target === "master") return [...MASTER_EFFECTS];
-    return ["eq", "hpf", "pan", "gate"];
+    return this.stripEffectsFor(target);
+  }
+
+  /**
+   * Which channel-strip sections actually affect a part's sound. Synth & bass
+   * are produced by the poly-synth worklet, which honors pan & gate (sent as
+   * worklet messages) but has no per-channel EQ/HPF — those Web Audio bus nodes
+   * are bypassed for the worklet, so we don't expose dead controls. Drums route
+   * through the real channel bus, so all four apply. Synth/bass tone shaping
+   * uses the preset filter and the Master high-pass (with per-part Applies-to).
+   */
+  private stripEffectsFor(part: Part): string[] {
+    return part === "drums" ? ["eq", "hpf", "pan", "gate"] : ["pan", "gate"];
   }
 
   getEffectChain(target: FxTarget): FxChain {
@@ -354,12 +408,13 @@ export class SoundModule {
 
   private getPartChain(part: Part): FxChain {
     const s = this.state.parts[part].strip;
-    const items: FxChainItem[] = [
-      { id: "eq", enabled: true, reorderable: false, params: { ...s.eq } },
-      { id: "hpf", enabled: s.hpf.on, reorderable: false, params: { freq: s.hpf.freq } },
-      { id: "pan", enabled: true, reorderable: false, params: { pan: s.pan } },
-      { id: "gate", enabled: s.gate.on, reorderable: false, params: { ...s.gate } },
-    ];
+    const all: Record<string, FxChainItem> = {
+      eq: { id: "eq", enabled: true, reorderable: false, params: { ...s.eq } },
+      hpf: { id: "hpf", enabled: s.hpf.on, reorderable: false, params: { freq: s.hpf.freq } },
+      pan: { id: "pan", enabled: true, reorderable: false, params: { pan: s.pan } },
+      gate: { id: "gate", enabled: s.gate.on, reorderable: false, params: { ...s.gate } },
+    };
+    const items = this.stripEffectsFor(part).map((id) => all[id]);
     return { target: part, reorderable: false, items };
   }
 
@@ -378,7 +433,7 @@ export class SoundModule {
         const id = item.id as EffectName;
         if (!(id in this.state.effects)) continue;
         Object.assign(this.state.effects[id], item.params, { on: item.enabled });
-        this.engine?.setEffect(id, { ...this.state.effects[id] });
+        this.applyMasterEffect(id);
       }
     } else {
       for (const item of chain) this.applyPartItem(target, item.id, item.enabled, item.params);
@@ -391,8 +446,9 @@ export class SoundModule {
       const id = effectId as EffectName;
       if (!(id in this.state.effects)) return;
       this.state.effects[id].on = enabled;
-      this.engine?.setEffect(id, { on: enabled });
+      this.applyMasterEffect(id);
     } else {
+      if (!this.stripEffectsFor(target).includes(effectId)) return;
       const strip = this.state.parts[target].strip;
       if (effectId === "hpf") strip.hpf.on = enabled;
       else if (effectId === "gate") strip.gate.on = enabled;
@@ -406,8 +462,8 @@ export class SoundModule {
       const id = effectId as EffectName;
       if (!(id in this.state.effects)) return;
       (this.state.effects[id] as Record<string, unknown>)[parameter] = value;
-      this.engine?.setEffect(id, { [parameter]: value });
-    } else {
+      this.applyMasterEffect(id);
+    } else if (this.stripEffectsFor(target).includes(effectId)) {
       const strip = this.state.parts[target].strip;
       switch (effectId) {
         case "eq":
@@ -436,7 +492,7 @@ export class SoundModule {
       const id = effectId as EffectName;
       if (!(id in DEFAULT_EFFECTS)) return;
       (this.state.effects as unknown as Record<string, unknown>)[id] = structuredClone(DEFAULT_EFFECTS[id]);
-      this.engine?.setEffect(id, { ...this.state.effects[id] });
+      this.applyMasterEffect(id);
     } else {
       const strip = this.state.parts[target].strip;
       const d = DEFAULT_CHANNEL_STRIP;
@@ -491,6 +547,7 @@ export class SoundModule {
 
   private applyStripSection(part: Part, id: string): void {
     if (!this.engine) return;
+    if (!this.stripEffectsFor(part).includes(id)) return; // skip bypassed worklet EQ/HPF
     const ch = PART_TO_AUDIO_CH[part];
     const s = this.state.parts[part].strip;
     switch (id) {
@@ -540,18 +597,27 @@ export class SoundModule {
   private applyFx(): void {
     if (!this.engine) return;
     this.engine.setEffectOrder([...this.state.effectOrder]);
-    for (const name of MASTER_EFFECTS) {
-      this.engine.setEffect(name, { ...this.state.effects[name] });
+    for (const name of MASTER_EFFECTS) this.applyMasterEffect(name);
+  }
+
+  // Push one master effect to the engine. `duck` is a real sidechain (not an
+  // insert effect): mpump wires it via setSidechainDuck/setDuckParams, NOT
+  // setEffect — so route it correctly.
+  private applyMasterEffect(id: EffectName): void {
+    if (!this.engine) return;
+    if (id === "duck") {
+      const d = this.state.effects.duck;
+      this.engine.setSidechainDuck(!!d.on);
+      this.engine.setDuckParams(d.depth, d.release, d.excludeBass, d.excludeSynth);
+    } else {
+      this.engine.setEffect(id, { ...this.state.effects[id] });
     }
   }
 
   private applyStrips(): void {
     for (const part of ["synth", "bass", "drums"] as Part[]) {
       // EQ first — it self-heals the channel bus, ensuring HPF/pan/gate apply.
-      this.applyStripSection(part, "eq");
-      this.applyStripSection(part, "hpf");
-      this.applyStripSection(part, "pan");
-      this.applyStripSection(part, "gate");
+      for (const id of this.stripEffectsFor(part)) this.applyStripSection(part, id);
     }
   }
 }

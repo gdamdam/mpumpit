@@ -14,9 +14,13 @@ export class FakeAudioEngine implements AudioEngine {
   calls: EngineCall[] = [];
   effects: EffectParams = structuredClone(DEFAULT_EFFECTS);
   order: EffectName[] = [];
-  worklets = true;
   resumed = false;
   closed = false;
+  // Poly-synth readiness — tests flip these to exercise degraded paths.
+  polyReady = true;
+  polyFailed = false;
+  sidechainDuck = false;
+  duckParams: { depth: number; release: number; excludeBass?: boolean; excludeSynth?: boolean } = { depth: 0.85, release: 0.04 };
 
   private rec(method: string, ...args: unknown[]) {
     this.calls.push({ method, args });
@@ -37,6 +41,11 @@ export class FakeAudioEngine implements AudioEngine {
   getEffects(): EffectParams { return this.effects; }
   setEffectOrder(order: EffectName[]) { this.rec("setEffectOrder", order); this.order = [...order]; }
   getEffectOrder(): EffectName[] { return this.order; }
+  setSidechainDuck(on: boolean) { this.rec("setSidechainDuck", on); this.sidechainDuck = on; }
+  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean) {
+    this.rec("setDuckParams", depth, release, excludeBass, excludeSynth);
+    this.duckParams = { depth, release, excludeBass, excludeSynth };
+  }
   setBpm(bpm: number) { this.rec("setBpm", bpm); }
   setChannelVolume(ch: number, v: number) { this.rec("setChannelVolume", ch, v); }
   setChannelEQ(ch: number, low: number, mid: number, high: number) { this.rec("setChannelEQ", ch, low, mid, high); }
@@ -46,7 +55,10 @@ export class FakeAudioEngine implements AudioEngine {
     this.rec("setChannelGate", ch, on, rate, depth, shape);
   }
   setVolume(v: number) { this.rec("setVolume", v); }
-  hasWorklets(): boolean { return this.worklets; }
+  stopAllDrums() { this.rec("stopAllDrums"); }
+  flushFxTails() { this.rec("flushFxTails"); }
+  isPolySynthReady(): boolean { return this.polyReady; }
+  didPolySynthFail(): boolean { return this.polyFailed; }
   async resume(): Promise<void> { this.resumed = true; this.rec("resume"); }
   close(): void { this.closed = true; this.rec("close"); }
 }

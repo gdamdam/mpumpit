@@ -151,50 +151,70 @@ function ExcludeToggles(props: {
 function PartStrip({ sm, part, onChange }: { sm: SoundModule; part: Part; onChange: () => void }) {
   const chain = sm.getEffectChain(part);
   const byId = Object.fromEntries(chain.items.map((i) => [i.id, i]));
-  const eq = byId.eq.params as { low: number; mid: number; high: number };
-  const hpf = byId.hpf;
-  const pan = byId.pan.params as { pan: number };
-  const gate = byId.gate;
-  const gp = gate.params as { rate: string; depth: number; shape: string };
   const set = (id: string, param: string, v: unknown) => { sm.setEffectParameter(part, id, param, v); onChange(); };
   const enable = (id: string, on: boolean) => { sm.setEffectEnabled(part, id, on); onChange(); };
+  const reset = (id: string) => { sm.resetEffect(part, id); onChange(); };
 
   return (
     <div className="fx">
       <div className="fx-hint">Channel strip · fixed processing (not reorderable)</div>
 
-      <div className="strip-group">
-        <div className="strip-group-head"><span>EQ</span>
-          <button type="button" className="fx-reset" onClick={() => { sm.resetEffect(part, "eq"); onChange(); }}>Reset</button></div>
-        <Slider label="Low" min={-12} max={12} step={0.5} value={eq.low} onChange={(v) => set("eq", "low", v)} format={dB} />
-        <Slider label="Mid" min={-12} max={12} step={0.5} value={eq.mid} onChange={(v) => set("eq", "mid", v)} format={dB} />
-        <Slider label="High" min={-12} max={12} step={0.5} value={eq.high} onChange={(v) => set("eq", "high", v)} format={dB} />
-      </div>
-
-      <div className="strip-group">
-        <div className="strip-group-head">
-          <Toggle label="HPF" on={hpf.enabled} onChange={(on) => enable("hpf", on)} />
-          <button type="button" className="fx-reset" onClick={() => { sm.resetEffect(part, "hpf"); onChange(); }}>Reset</button>
+      {byId.eq && (
+        <div className="strip-group">
+          <div className="strip-group-head"><span>EQ</span>
+            <button type="button" className="fx-reset" onClick={() => reset("eq")}>Reset</button></div>
+          {(() => {
+            const eq = byId.eq.params as { low: number; mid: number; high: number };
+            return (<>
+              <Slider label="Low" min={-12} max={12} step={0.5} value={eq.low} onChange={(v) => set("eq", "low", v)} format={dB} />
+              <Slider label="Mid" min={-12} max={12} step={0.5} value={eq.mid} onChange={(v) => set("eq", "mid", v)} format={dB} />
+              <Slider label="High" min={-12} max={12} step={0.5} value={eq.high} onChange={(v) => set("eq", "high", v)} format={dB} />
+            </>);
+          })()}
         </div>
-        <Slider label="Cutoff" min={20} max={500} step={1} value={Number(hpf.params.freq ?? 120)}
-          onChange={(v) => set("hpf", "freq", v)} format={(v) => `${Math.round(v)}Hz`} />
-      </div>
+      )}
 
-      <div className="strip-group">
-        <div className="strip-group-head"><span>Pan</span>
-          <button type="button" className="fx-reset" onClick={() => { sm.resetEffect(part, "pan"); onChange(); }}>Reset</button></div>
-        <Slider label="Pan" min={-1} max={1} step={0.05} value={pan.pan} onChange={(v) => set("pan", "pan", v)} format={panFmt} />
-      </div>
-
-      <div className="strip-group">
-        <div className="strip-group-head">
-          <Toggle label="Gate" on={gate.enabled} onChange={(on) => enable("gate", on)} />
-          <button type="button" className="fx-reset" onClick={() => { sm.resetEffect(part, "gate"); onChange(); }}>Reset</button>
+      {byId.hpf && (
+        <div className="strip-group">
+          <div className="strip-group-head">
+            <Toggle label="HPF" on={byId.hpf.enabled} onChange={(on) => enable("hpf", on)} />
+            <button type="button" className="fx-reset" onClick={() => reset("hpf")}>Reset</button>
+          </div>
+          <Slider label="Cutoff" min={20} max={500} step={1} value={Number(byId.hpf.params.freq ?? 120)}
+            onChange={(v) => set("hpf", "freq", v)} format={(v) => `${Math.round(v)}Hz`} />
         </div>
-        <Select label="Rate" value={gp.rate} options={GATE_RATES} onChange={(v) => set("gate", "rate", v)} />
-        <Select label="Shape" value={gp.shape} options={GATE_SHAPES} onChange={(v) => set("gate", "shape", v)} />
-        <Slider label="Depth" min={0} max={1} step={0.01} value={gp.depth} onChange={(v) => set("gate", "depth", v)} format={(v) => `${Math.round(v * 100)}%`} />
-      </div>
+      )}
+
+      {byId.pan && (
+        <div className="strip-group">
+          <div className="strip-group-head"><span>Pan</span>
+            <button type="button" className="fx-reset" onClick={() => reset("pan")}>Reset</button></div>
+          <Slider label="Pan" min={-1} max={1} step={0.05} value={(byId.pan.params as { pan: number }).pan}
+            onChange={(v) => set("pan", "pan", v)} format={panFmt} />
+        </div>
+      )}
+
+      {byId.gate && (() => {
+        const gp = byId.gate.params as { rate: string; depth: number; shape: string };
+        return (
+          <div className="strip-group">
+            <div className="strip-group-head">
+              <Toggle label="Gate" on={byId.gate.enabled} onChange={(on) => enable("gate", on)} />
+              <button type="button" className="fx-reset" onClick={() => reset("gate")}>Reset</button>
+            </div>
+            <Select label="Rate" value={gp.rate} options={GATE_RATES} onChange={(v) => set("gate", "rate", v)} />
+            <Select label="Shape" value={gp.shape} options={GATE_SHAPES} onChange={(v) => set("gate", "shape", v)} />
+            <Slider label="Depth" min={0} max={1} step={0.01} value={gp.depth} onChange={(v) => set("gate", "depth", v)} format={(v) => `${Math.round(v * 100)}%`} />
+          </div>
+        );
+      })()}
+
+      {!byId.eq && (
+        <div className="fx-note">
+          Tone for {part}: use the preset filter and Master ▸ HPF (with its
+          per-part “Applies to”). mpump's worklet voice has no per-channel EQ.
+        </div>
+      )}
     </div>
   );
 }

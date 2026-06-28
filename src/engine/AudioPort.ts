@@ -1179,6 +1179,31 @@ export class AudioPort {
     // No-op
   }
 
+  // ── Readiness & panic helpers (added for mpumpit) ─────────────────────────
+  /** True once the poly-synth worklet (the synth/bass voice) has loaded. */
+  isPolySynthReady(): boolean {
+    return !!this.polySynth;
+  }
+
+  /** True if the poly-synth worklet failed to load (synth/bass unavailable). */
+  didPolySynthFail(): boolean {
+    return this.polySynthFailed;
+  }
+
+  /** Stop and release every active drum one-shot immediately. */
+  stopAllDrums(): void {
+    for (const src of this.activeDrumSrcs) {
+      try { src.stop(); } catch { /* */ }
+      try { src.disconnect(); } catch { /* */ }
+    }
+    this.activeDrumSrcs.clear();
+  }
+
+  /** Rebuild the FX chain, discarding delay/reverb node state (flushes tails). */
+  flushFxTails(): void {
+    this.rebuildFxChain();
+  }
+
   /** Update a drum voice's params and regenerate its buffer. */
   setDrumVoice(note: number, params: Partial<DrumVoiceParams>): void {
     const current = this.drumVoiceParams.get(note) ?? { ...DEFAULT_DRUM_VOICE };

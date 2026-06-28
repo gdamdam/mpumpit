@@ -68,6 +68,20 @@ Plug it in and pick it directly in **MIDI IN** — no virtual port needed.
 mpumpit **never opens a MIDI output**, so there is no possibility of a feedback
 loop back to midip.
 
+### Computer keyboard (no MIDI gear)
+
+Click **⌨ Keys** to play from your computer keyboard using the Ableton-style
+layout, and pick which part it plays:
+
+```
+  W E   T Y U       O P          ← black keys
+ A S D F G H J K   L ;           ← white keys (A = middle C)
+ Z X = octave down/up   C V = velocity down/up
+```
+
+It routes through the same engine as MIDI, so panic, activity, and ownership all
+apply. Typing in a number/menu field is ignored so it never fires stray notes.
+
 ## Default channel assignments
 
 | Part  | MIDI channel | mpump engine channel |

@@ -49,9 +49,10 @@ describe("App — end to end with mocked Web MIDI + Web Audio", () => {
     await act(async () => { input.send([0x80, 60, 0]); });
     expect(engine.callsTo("liveNoteOff").map((c) => c.args)).toContainEqual([0, 60]);
 
-    // PANIC silences every part.
+    // PANIC silences every part: synth/bass voices off + drum one-shots stopped.
     fireEvent.click(screen.getByRole("button", { name: "PANIC" }));
-    expect(engine.callsTo("allNotesOff").map((c) => c.args[0])).toEqual(expect.arrayContaining([0, 1, 9]));
+    expect(engine.callsTo("allNotesOff").map((c) => c.args[0])).toEqual(expect.arrayContaining([0, 1]));
+    expect(engine.callsTo("stopAllDrums").length).toBeGreaterThan(0);
   });
 
   it("queues MIDI received before audio starts, then flushes on start", async () => {
@@ -64,6 +65,21 @@ describe("App — end to end with mocked Web MIDI + Web Audio", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Start Audio/i }));
     await waitFor(() => expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([0, 64, 100]));
+  });
+
+  it("plays the target part from the computer keyboard", async () => {
+    render(<App createEngine={() => engine} />);
+    await screen.findByRole("option", { name: "Test Controller" });
+    fireEvent.click(screen.getByRole("button", { name: /Start Audio/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Start Audio/i })).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: /Keys/i })); // enable QWERTY → synth
+
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })); });
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([0, 60, 100]); // 'a' = middle C → synth
+
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keyup", { key: "a" })); });
+    expect(engine.callsTo("liveNoteOff").map((c) => c.args)).toContainEqual([0, 60]);
   });
 
   it("persists settings (channel edit) across remounts", async () => {
