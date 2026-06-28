@@ -1,0 +1,40 @@
+mpumpit
+Copyright (C) 2026 mpumpit contributors
+
+This program is free software licensed under the GNU Affero General Public
+License, version 3.0 only (AGPL-3.0-only). See the LICENSE file for the full
+text.
+
+──────────────────────────────────────────────────────────────────────────────
+Attribution — derived from mpump
+──────────────────────────────────────────────────────────────────────────────
+
+mpumpit embeds and reuses the audio engine of "mpump — Instant browser
+groovebox", Copyright (C) 2024-2026 gdamdam (https://github.com/gdamdam),
+which is licensed under the GNU Affero General Public License, version 3.0
+only.
+
+Because mpumpit is a derivative work of mpump's AGPL-3.0-only engine, mpumpit
+as a whole is distributed under the same license (AGPL-3.0-only). The engine
+code is NOT relicensed.
+
+The following files are copied verbatim (apart from import-path adjustments and
+an added license header) from mpump's source tree (mpump/server/):
+
+  src/engine/AudioPort.ts      ← src/engine/AudioPort.ts
+  src/engine/drumSynth.ts      ← src/engine/drumSynth.ts
+  src/engine/CVOutput.ts       ← src/engine/CVOutput.ts
+  src/engine/storage.ts        ← src/utils/storage.ts
+  src/engine/soundPresets.ts   ← src/data/soundPresets.ts
+  public/worklets/*.js         ← public/worklets/*.js
+    (poly-synth, moog-filter, diode-filter, bitcrusher,
+     sync-osc, fm-osc, wavetable-osc)
+
+The following file is derived (trimmed to the engine-relevant subset) from
+mpump:
+
+  src/engine/types.ts          ← src/types.ts (synth/drum/effect types only)
+
+All other files (the MIDI input router, the SoundModule facade, the drum
+compatibility map, persistence, and the UI) are original to mpumpit and are
+likewise licensed AGPL-3.0-only.
