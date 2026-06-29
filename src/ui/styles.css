@@ -1,6 +1,20 @@
 /* mpumpit — hardware sound-module faceplate. Original work, AGPL-3.0-only. */
 
+/* Chakra Petch — mpump's brand typeface (SIL OFL), used for the wordmark so
+   mpumpit reads as part of the mpump family. Bundled in public/fonts/. */
+@font-face {
+  font-family: "Chakra Petch";
+  font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/chakra-petch-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Chakra Petch";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url("/fonts/chakra-petch-700.woff2") format("woff2");
+}
+
 :root {
+  --brand: "Chakra Petch", var(--sans);
   --panel: #1c1d21;
   --raised: #26282e;
   --raised-2: #2b2e35;
@@ -58,7 +72,7 @@ html, body {
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; flex-direction: column; line-height: 1.1; margin-right: auto; }
-.brand-name { font-weight: 700; letter-spacing: 0.02em; font-size: 18px; }
+.brand-name { font-family: var(--brand); font-weight: 700; letter-spacing: 0.01em; font-size: 19px; }
 .brand-sub {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.22em;
   text-transform: uppercase; color: var(--muted); margin-top: 3px;

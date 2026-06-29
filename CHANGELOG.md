@@ -3,6 +3,12 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.3] — 2026-06-29
+
+### Changed
+- The **mpumpit** wordmark now uses mpump's brand typeface, **Chakra Petch**
+  (SIL OFL, bundled in public/fonts/), so it reads as part of the mpump family.
+
 ## [0.4.2] — 2026-06-29
 
 ### Fixed
