@@ -21,6 +21,7 @@ import {
   MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP,
   type FxTarget, type FxChain, type FxChainItem, type SoundState, type PartState, type ChannelStrip, type UserPresets,
 } from "./types";
+import { normalizeSoundState } from "./normalizeState";
 
 /** The subset of AudioPort the facade needs. Lets tests inject a fake engine. */
 export interface AudioEngine {
@@ -46,6 +47,10 @@ export interface AudioEngine {
   flushFxTails(): void;
   isPolySynthReady(): boolean;
   didPolySynthFail(): boolean;
+  /** Register a one-shot callback fired when the poly-synth worklet load settles
+   *  (loaded OR failed) — possibly after the readiness timeout. Fires at once if
+   *  it already settled. */
+  onPolySynthSettled(cb: () => void): void;
   getContextState(): string;
   resume(): Promise<void>;
   close(): void;
@@ -61,6 +66,9 @@ export interface SoundModuleOptions {
   createEngine?: EngineFactory;
   /** Max note events buffered before the engine is ready (default 64). */
   queueLimit?: number;
+  /** How long to wait for the poly-synth worklet before proceeding degraded
+   *  (default 8000ms). Lowered in tests to exercise the timeout path. */
+  polySynthTimeoutMs?: number;
 }
 
 interface HeldNote {
@@ -136,11 +144,15 @@ export class SoundModule {
   private engine: AudioEngine | null = null;
   private readonly createEngine: EngineFactory;
   private readonly queueLimit: number;
+  private readonly polySynthTimeoutMs: number;
   private state: SoundState;
 
   private status: SoundStatus = "idle";
   private initPromise: Promise<void> | null = null;
   private readyResolvers: Array<() => void> = [];
+  // Resolves the in-flight worklet wait when the engine reports it settled
+  // (loaded/failed); null once init is past that wait.
+  private settleResolve: (() => void) | null = null;
 
   // Notes physically held when MIDI arrives before the engine is ready. Keyed
   // by part:note, so a release simply forgets the note — no orphan Note Offs or
@@ -157,8 +169,12 @@ export class SoundModule {
   constructor(opts: SoundModuleOptions = {}) {
     this.createEngine = opts.createEngine ?? (() => defaultAudioPortEngine());
     this.queueLimit = opts.queueLimit ?? 64;
+    this.polySynthTimeoutMs = opts.polySynthTimeoutMs ?? 8000;
+    // Normalize persisted/injected state against defaults so malformed nested
+    // data (bad effectOrder, null effects, non-array preset lists, …) defaults
+    // field-by-field instead of crashing mergeState / init / FX rendering.
     this.state = opts.initialState
-      ? mergeState(defaultSoundState(), opts.initialState)
+      ? mergeState(defaultSoundState(), normalizeSoundState(opts.initialState))
       : defaultSoundState();
     this.hydrate();
   }
@@ -203,54 +219,105 @@ export class SoundModule {
    */
   async initialize(): Promise<void> {
     if (this.status === "ready") return;
+    if (this.status === "disposed") return; // a disposed module stays disposed
     if (this.initPromise) return this.initPromise;
     this.status = "initializing";
-    this.initPromise = this.doInitialize();
-    return this.initPromise;
+    const p = this.doInitialize();
+    this.initPromise = p;
+    // Drop the rejected promise so a genuine retry starts fresh (doInitialize
+    // already cleaned up the partial engine + reset status to "idle"). Guarded so
+    // a later retry's promise isn't nulled out.
+    p.catch(() => { if (this.initPromise === p) this.initPromise = null; });
+    return p;
   }
 
   private async doInitialize(): Promise<void> {
-    const engine = this.createEngine();
+    let engine: AudioEngine;
+    try {
+      engine = this.createEngine();
+    } catch (err) {
+      if (this.status !== "disposed") this.status = "idle";
+      throw err;
+    }
     this.engine = engine;
-    this.applyAll();
-    await engine.resume();
-    // Wait for the poly-synth worklet specifically (the only synth/bass voice).
-    // Holding here keeps the pre-ready queue alive so live notes are not dropped
-    // while it loads; we resolve as soon as it is ready, fails, or times out.
-    await this.waitForPolySynth(8000);
+    try {
+      // One settled-handler covers BOTH the in-flight wait and a LATE settle
+      // (worklet finishing after the timeout): it resolves the wait if pending,
+      // else refreshes degraded state + re-applies worklet-owned settings.
+      engine.onPolySynthSettled(() => this.onPolySynthSettled(engine));
+      this.applyAll();
+      await engine.resume();
+      if (this.isStale(engine)) return; // disposed/replaced mid-init — don't go "ready"
+      // Wait for the poly-synth worklet (the only synth/bass voice), keeping the
+      // pre-ready queue alive so live notes aren't dropped while it loads.
+      await this.waitForPolySynthOrTimeout(engine, this.polySynthTimeoutMs);
+      if (this.isStale(engine)) return;
+      if (engine.didPolySynthFail()) {
+        this.degraded = true;
+        this.warning = "Synth & bass are unavailable — their audio worklet failed to load. Drums still work.";
+      } else if (!engine.isPolySynthReady()) {
+        this.degraded = true;
+        this.warning = "Synth & bass are still initializing — notes may be silent until the worklet finishes loading.";
+      }
+      // Synth/bass pan, gate, preset and volume route to the poly-synth worklet,
+      // but applyAll() ran before it existed (async load), so those were dropped.
+      // Re-send them now it's here (a LATE load re-sends via onPolySynthSettled).
+      if (engine.isPolySynthReady()) this.applyAfterWorklet();
+      this.status = "ready";
+      this.flushPending();
+      this.readyResolvers.forEach((r) => r());
+      this.readyResolvers = [];
+      this.emit();
+    } catch (err) {
+      // Initialization failed (createEngine/applyAll/resume/wait threw). Tear down
+      // the partial engine and reset so a subsequent Start Audio truly retries.
+      try { engine.close(); } catch { /* ignore */ }
+      if (this.engine === engine) this.engine = null;
+      this.settleResolve = null;
+      if (this.status !== "disposed") this.status = "idle";
+      throw err;
+    }
+  }
+
+  /** True when this init attempt has been superseded (disposed or replaced). */
+  private isStale(engine: AudioEngine): boolean {
+    return this.status === "disposed" || this.engine !== engine;
+  }
+
+  /** Resolve when the worklet load settles (loaded/failed) OR the timeout fires. */
+  private waitForPolySynthOrTimeout(engine: AudioEngine, timeoutMs: number): Promise<void> {
+    if (engine.isPolySynthReady() || engine.didPolySynthFail()) return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.settleResolve = null;
+        resolve();
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      this.settleResolve = finish; // onPolySynthSettled() calls this
+    });
+  }
+
+  // Engine reports the worklet load has settled. During init this unblocks the
+  // wait; after init (a LATE settle past the timeout) it refreshes the degraded
+  // state and re-applies worklet-owned settings (pan/gate/preset/volume), or
+  // marks definitive failure. Ignored once disposed/replaced.
+  private onPolySynthSettled(engine: AudioEngine): void {
+    if (this.settleResolve) this.settleResolve();
+    if (this.isStale(engine)) return;
+    if (this.status !== "ready") return; // still initializing → doInitialize handles it
     if (engine.didPolySynthFail()) {
       this.degraded = true;
       this.warning = "Synth & bass are unavailable — their audio worklet failed to load. Drums still work.";
-    } else if (!engine.isPolySynthReady()) {
-      this.degraded = true;
-      this.warning = "Synth & bass are still initializing — notes may be silent until the worklet finishes loading.";
+    } else if (engine.isPolySynthReady()) {
+      this.degraded = false;
+      this.warning = null;
+      this.applyAfterWorklet();
     }
-    // Synth/bass pan, gate, preset and volume are routed to the poly-synth
-    // worklet, but applyAll() ran before it existed (it loads async), so those
-    // messages were dropped. Re-send them now the worklet is here, or the saved
-    // values show in the UI but stay inaudible after a reload.
-    if (engine.isPolySynthReady()) this.applyAfterWorklet();
-    this.status = "ready";
-    this.flushPending();
-    this.readyResolvers.forEach((r) => r());
-    this.readyResolvers = [];
     this.emit();
-  }
-
-  private waitForPolySynth(timeoutMs: number): Promise<void> {
-    const engine = this.engine;
-    if (!engine) return Promise.resolve();
-    return new Promise((resolve) => {
-      const start = performance.now();
-      const tick = () => {
-        if (!this.engine) return resolve();
-        if (engine.isPolySynthReady() || engine.didPolySynthFail() || performance.now() - start >= timeoutMs) {
-          return resolve();
-        }
-        setTimeout(tick, 50);
-      };
-      tick();
-    });
   }
 
   /** True when the engine started but the synth/bass worklet is unavailable. */
@@ -286,6 +353,7 @@ export class SoundModule {
     this.engine = null;
     this.pendingHeld.clear();
     this.initPromise = null;
+    this.settleResolve = null;
     this.status = "disposed";
     this.emit();
   }

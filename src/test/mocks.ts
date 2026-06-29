@@ -19,6 +19,9 @@ export class FakeAudioEngine implements AudioEngine {
   // Poly-synth readiness — tests flip these to exercise degraded paths.
   polyReady = true;
   polyFailed = false;
+  /** When true, resume() rejects — exercises init-failure / retry paths. */
+  failResume = false;
+  private settledCb: (() => void) | null = null;
   sidechainDuck = false;
   duckParams: { depth: number; release: number; excludeBass?: boolean; excludeSynth?: boolean } = { depth: 0.85, release: 0.04 };
 
@@ -59,8 +62,20 @@ export class FakeAudioEngine implements AudioEngine {
   flushFxTails() { this.rec("flushFxTails"); }
   isPolySynthReady(): boolean { return this.polyReady; }
   didPolySynthFail(): boolean { return this.polyFailed; }
+  onPolySynthSettled(cb: () => void): void {
+    // Mirror AudioPort: fire immediately if already settled, else store it.
+    if (this.polyReady || this.polyFailed) { cb(); return; }
+    this.settledCb = cb;
+  }
+  /** Test helper: simulate the worklet load settling after the fact (set
+   *  polyReady/polyFailed first, then call this). */
+  settlePolySynth(): void { this.settledCb?.(); }
   getContextState(): string { return "running"; }
-  async resume(): Promise<void> { this.resumed = true; this.rec("resume"); }
+  async resume(): Promise<void> {
+    this.resumed = true;
+    this.rec("resume");
+    if (this.failResume) throw new Error("resume failed");
+  }
   close(): void { this.closed = true; this.rec("close"); }
 }
 

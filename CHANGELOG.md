@@ -3,6 +3,34 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] — 2026-06-29
+
+### Fixed
+- **Audio init can be retried after a failure.** If engine creation, `resume()`,
+  or worklet init rejects, SoundModule now tears down the partial engine and
+  resets, so a second "Start Audio" builds a fresh engine instead of replaying
+  the rejected promise. Concurrent successful calls still share one init.
+- **Slow-loading worklet no longer drops synth/bass notes.** AudioPort queues
+  live synth/bass notes (bounded, Note On/Off-correct) while the poly-synth
+  worklet loads and replays the still-held ones on a late load, re-applying
+  worklet-owned params/volume/pan/trance-gate and notifying SoundModule, which
+  clears the degraded warning (or marks definitive failure).
+- **Malformed persisted state can't crash the app.** Persisted `soundState` is
+  normalized field-by-field against defaults (non-array `effectOrder`, null
+  effects, non-array preset lists, bad part/strip/voice/drumMap shapes, out-of-
+  range numerics), keeping valid/older-partial data and never throwing.
+- **Debounced settings survive refresh/navigation.** The pending save is flushed
+  synchronously on `pagehide` and effect cleanup before the timer is cancelled;
+  a "Reset all settings" wipe is no longer undone by a trailing flush.
+- **CV gate is genuinely ref-counted by channel + note.** The same pitch held on
+  synth and bass are independent owners (releasing one keeps the gate high), and
+  per-channel all-notes-off clears only that channel's CV ownership.
+
+### Hardening
+- `dispose()` during async initialization can no longer flip status back to
+  ready, emit stale updates, or act on a closed engine; a late AudioWorklet
+  completion after `close()` is ignored, and queues/listeners are cleared.
+
 ## [1.1.0] — 2026-06-29
 
 ### Changed

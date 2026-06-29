@@ -33,6 +33,9 @@ export function App({ createEngine }: AppProps = {}) {
   const lastTest = useRef<{ part: Part; note: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimers = useRef<Partial<Record<Part, ReturnType<typeof setTimeout>>>>({});
+  // Set while a "Reset all settings" reload is in flight, so a trailing flush
+  // (pagehide / effect cleanup) can't write the old settings back over the wipe.
+  const resetting = useRef(false);
 
   const [, bump] = useReducer((x) => x + 1, 0);
   const [status, setStatus] = useState<SoundStatus>("idle");
@@ -53,13 +56,30 @@ export function App({ createEngine }: AppProps = {}) {
   useEffect(() => {
     const settings = loadSettings();
     const sm = new SoundModule({ initialState: settings?.soundState, createEngine });
+    // Persist is debounced (300ms). `cleanedUp` guards this effect-instance's
+    // closures from writing after teardown (e.g. a StrictMode disposed instance
+    // running after a fresh one mounted), and `resetting` guards a reload-wipe.
+    let cleanedUp = false;
+    let pendingSave = false;
+    const doSave = () => {
+      const r = routerRef.current;
+      if (!r || smRef.current !== sm) return; // only the current, live instance persists
+      saveSettings({ soundState: sm.getState(), channels: r.getChannels(), selectedInputId: r.getSelectedInputId() });
+    };
     const schedulePersist = () => {
+      if (cleanedUp || resetting.current) return;
+      pendingSave = true;
       if (persistTimer.current) clearTimeout(persistTimer.current);
-      persistTimer.current = setTimeout(() => {
-        const r = routerRef.current;
-        if (!r) return;
-        saveSettings({ soundState: sm.getState(), channels: r.getChannels(), selectedInputId: r.getSelectedInputId() });
-      }, 300);
+      persistTimer.current = setTimeout(() => { persistTimer.current = null; pendingSave = false; doSave(); }, 300);
+    };
+    // Write the latest state NOW (before the debounce fires) so a change followed
+    // immediately by refresh/navigation/unmount isn't lost. No-op if nothing is
+    // pending, the instance is torn down, or a reset wipe is in progress.
+    const flushPersist = () => {
+      if (!pendingSave || cleanedUp || resetting.current) return;
+      pendingSave = false;
+      if (persistTimer.current) { clearTimeout(persistTimer.current); persistTimer.current = null; }
+      doSave();
     };
     let midiTimer: ReturnType<typeof setTimeout> | undefined;
     const flashMidiIn = () => {
@@ -160,8 +180,8 @@ export function App({ createEngine }: AppProps = {}) {
     const onKeyUp = (e: KeyboardEvent) => {
       if (qwerty.handleKeyUp(e.key)) e.preventDefault();
     };
-    const onHide = () => { qwerty.releaseAll(); router.panic(); };
-    const onVisibility = () => { if (document.hidden) { qwerty.releaseAll(); router.panic(); } };
+    const onHide = () => { flushPersist(); qwerty.releaseAll(); router.panic(); };
+    const onVisibility = () => { if (document.hidden) { flushPersist(); qwerty.releaseAll(); router.panic(); } };
     window.addEventListener("pagehide", onHide);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("keydown", onKeyDown);
@@ -172,7 +192,9 @@ export function App({ createEngine }: AppProps = {}) {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
-      if (persistTimer.current) clearTimeout(persistTimer.current);
+      flushPersist(); // save any pending change BEFORE canceling the debounce timer
+      cleanedUp = true;
+      if (persistTimer.current) { clearTimeout(persistTimer.current); persistTimer.current = null; }
       qwerty.releaseAll();
       unsub();
       router.dispose();
@@ -249,6 +271,9 @@ export function App({ createEngine }: AppProps = {}) {
   const resetSettings = () => {
     // Destructive + irreversible (hard reload) — confirm first.
     if (!window.confirm("Reset all mpumpit settings (presets, FX, routing, volumes) and reload?")) return;
+    // Block any trailing flush (the reload fires pagehide + unmount, which would
+    // otherwise re-save the just-wiped state) before clearing + reloading.
+    resetting.current = true;
     clearSettings();
     location.reload();
   };

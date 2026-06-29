@@ -15,6 +15,7 @@
 import type { SynthParams, EffectParams, EffectName, DrumVoiceParams } from "./types";
 import { DEFAULT_SYNTH_PARAMS, DEFAULT_EFFECTS, DEFAULT_DRUM_VOICE, lfoDivisionToHz, delayDivisionToSeconds } from "./types";
 import { CVOutput } from "./CVOutput";
+import { CvGateTracker, PendingLiveNotes } from "./voiceQueues";
 import { getItem } from "./storage";
 import {
   perfToCtx,
@@ -143,8 +144,18 @@ export class AudioPort {
   private polySynthGateFractionDefault = 0.8;
   /** Notes scheduled before the poly-synth worklet finished loading (bounded). */
   private pendingSynthNotes: { ch: number; note: number; vel: number; gate: number }[] = [];
+  /** Live (held) synth/bass notes received before the worklet loaded — replayed
+   *  on late load so notes between SoundModule's timeout and worklet readiness
+   *  are not dropped. Bounded; released notes are removed (no ghost replay). */
+  private pendingLiveNotes = new PendingLiveNotes(64);
   /** True when the poly-synth worklet can never load (no audioWorklet support or addModule failed). */
   private polySynthFailed = false;
+  /** Set once the poly-synth worklet load has settled (loaded OR failed). */
+  private polySynthSettled = false;
+  /** Notified once when the worklet load settles (late readiness or failure). */
+  private polySynthSettledCb: (() => void) | null = null;
+  /** Set by close() so a late, in-flight worklet load is ignored after teardown. */
+  private isClosed = false;
   /** Whether the worklet is currently rendering bass to output[1] (split mode). Mirrors the worklet's flag. */
   private workletSplitMode = false;
   /** Current FX bus that the worklet's output[1] (bass) is connected to, or null when unused. */
@@ -372,8 +383,7 @@ export class AudioPort {
 
   private async loadWorklets(): Promise<void> {
     if (!this.ctx.audioWorklet) {
-      this.polySynthFailed = true;
-      this.pendingSynthNotes.length = 0;
+      this.failPolySynth();
       return;
     }
     // Poly-synth first and separately — it is required (the only synth/bass
@@ -382,10 +392,10 @@ export class AudioPort {
       await this.ctx.audioWorklet.addModule("./worklets/poly-synth.js");
     } catch (e) {
       console.error("poly-synth worklet failed to load — synth and bass will be silent:", e);
-      this.polySynthFailed = true;
-      this.pendingSynthNotes.length = 0;
+      this.failPolySynth();
       return;
     }
+    if (this.isClosed) return; // teardown raced the load — drop it
     try {
       // bitcrusher is the only worklet instantiated as a node. The synth's other
       // models (moog/diode ladder filters, sync/fm/wavetable oscillators) are
@@ -396,6 +406,7 @@ export class AudioPort {
       console.warn("Optional bitcrusher worklet failed to load, using WaveShaper fallback:", e);
       this.workletsLoaded = false;
     }
+    if (this.isClosed) return; // teardown raced the load — drop it
     // Create persistent poly-synth node. Two stereo outputs: output[0] carries
     // the full mix by default; when split mode is on, output[1] carries bass
     // (channel 1) so the FX router can route synth and bass independently.
@@ -418,11 +429,51 @@ export class AudioPort {
     }
     this.polySynth.port.postMessage({ type: "bpm", bpm: this.bpm });
     this.polySynth.port.postMessage({ type: "duck_params", depth: this.duckDepth, release: this.duckRelease });
-    // Flush notes that were scheduled while the worklet was still loading
+    // Re-apply worklet-owned trance-gate state — gates run INSIDE the worklet, so
+    // any active gate sent before the node existed was dropped (esp. after a late
+    // load past SoundModule's readiness timeout).
+    for (const [ch, g] of this.channelGateSettings) {
+      if (ch === DRUM_CH) continue;
+      this.setChannelGate(ch, true, g.rate, g.depth, g.shape, g.mode, g.pattern);
+    }
+    // Flush notes scheduled (look-ahead) while the worklet was still loading.
     for (const n of this.pendingSynthNotes) {
       this.polySynth.port.postMessage({ type: "noteOn", channel: n.ch, note: n.note, vel: n.vel, gate: n.gate });
     }
     this.pendingSynthNotes.length = 0;
+    // Flush LIVE held notes (still-pressed keys) as sustained voices, and mirror
+    // them into the CV gate — these arrived after SoundModule marked itself ready
+    // (its timeout) but before the worklet existed, so liveNoteOn queued them.
+    for (const n of this.pendingLiveNotes.drain()) {
+      this.polySynth.port.postMessage({ type: "noteOn", channel: n.ch, note: n.note, vel: n.vel, gate: 0 });
+      this.cvGate.noteOn(n.ch, n.note);
+    }
+    this.markPolySynthSettled();
+  }
+
+  /** Mark the poly-synth load as definitively failed; drop anything queued for it. */
+  private failPolySynth(): void {
+    this.polySynthFailed = true;
+    this.pendingSynthNotes.length = 0;
+    this.pendingLiveNotes.clear();
+    this.markPolySynthSettled();
+  }
+
+  /** Fire the one-shot "worklet settled" notification (ignored after close()). */
+  private markPolySynthSettled(): void {
+    this.polySynthSettled = true;
+    if (this.isClosed) return;
+    const cb = this.polySynthSettledCb;
+    this.polySynthSettledCb = null;
+    cb?.();
+  }
+
+  /** Register a one-shot callback fired when the worklet load settles (loaded or
+   *  failed). Fires immediately if it has already settled. SoundModule uses this
+   *  to clear/refresh its degraded state and re-apply worklet-owned settings. */
+  onPolySynthSettled(cb: () => void): void {
+    if (this.polySynthSettled) { if (!this.isClosed) cb(); return; }
+    this.polySynthSettledCb = cb;
   }
 
   /** Set gate fraction for poly-synth per channel (called by Engine with device config value). */
@@ -608,10 +659,15 @@ export class AudioPort {
   // one instead of racing (a late disconnect tearing down a fresh connection).
   private antiClipTimer = 0;
   private channelMonoTimers = new Map<number, number>();
-  // Held synth/bass notes for the mono CV gate (last-note priority). The gate
-  // only drops when this empties, so releasing one of several held notes can't
-  // cut the CV gate while others still sound.
-  private cvHeldNotes = new Set<number>();
+  // Ref-counted mono CV gate, keyed by (channel, note) so the same pitch held by
+  // synth and bass are independent owners: releasing one can't cut the gate while
+  // the other still sounds, and a per-channel all-notes-off only clears that
+  // channel. Last-note pitch priority. The arrow sinks read this.cv lazily (it is
+  // assigned in the constructor before any note arrives).
+  private cvGate = new CvGateTracker({
+    setPitch: (n, t) => this.cv.setPitch(n, t),
+    setGate: (on, t) => this.cv.setGate(on, t),
+  });
   setEffect<K extends EffectName>(name: K, params: Partial<EffectParams[K]>): void {
     const prev = this.fx[name];
     const onChanged = "on" in params && (params as { on?: boolean }).on !== (prev as { on?: boolean }).on;
@@ -1147,14 +1203,14 @@ export class AudioPort {
       this.playDrum(note, vel, time);
     } else {
       this.playSynth(ch, note, vel, time);
-      this.cvNoteOn(note, time);
+      this.cvGate.noteOn(ch, note, time);
     }
   }
 
   noteOff(ch: number, note: number, time?: number): void {
     if (ch === DRUM_CH) return; // drums are one-shots
     this.releaseSynth(ch, note, time);
-    this.cvNoteOff(note, time);
+    this.cvGate.noteOff(ch, note, time);
   }
 
   /** Live keyboard noteOn — gate:0 so worklet sustains until liveNoteOff rather than auto-releasing. */
@@ -1165,7 +1221,11 @@ export class AudioPort {
     }
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "noteOn", channel: ch, note, vel, gate: 0 });
-      this.cvNoteOn(note);
+      this.cvGate.noteOn(ch, note);
+    } else if (!this.polySynthFailed) {
+      // Worklet still loading — hold the note (bounded) so it isn't dropped; it
+      // replays and lights the CV gate once the worklet finishes loading.
+      this.pendingLiveNotes.add(ch, note, vel);
     }
   }
 
@@ -1173,7 +1233,10 @@ export class AudioPort {
     if (ch === DRUM_CH) return;
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "noteOff", channel: ch, note });
-      this.cvNoteOff(note);
+      this.cvGate.noteOff(ch, note);
+    } else {
+      // Released before the worklet loaded — forget it so it never replays.
+      this.pendingLiveNotes.remove(ch, note);
     }
   }
 
@@ -1182,33 +1245,8 @@ export class AudioPort {
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "allNotesOff", channel: ch });
     }
-    this.cvAllOff();
-  }
-
-  // ── CV gate ref-counting (added for mpumpit) ─────────────────────────────
-  // CVOutput exposes a single mono gate. Track held synth/bass notes here so
-  // the gate only falls when the last note releases (last-note priority for
-  // pitch), and clamp the note so a stray value can't reach the CV AudioParam.
-  private cvNoteOn(note: number, time?: number): void {
-    const n = safeClamp(Math.round(note), 0, 127, 60);
-    this.cvHeldNotes.delete(n);
-    this.cvHeldNotes.add(n); // (re)insert as most-recent
-    this.cv.setPitch(n, time);
-    this.cv.setGate(true, time);
-  }
-  private cvNoteOff(note: number, time?: number): void {
-    this.cvHeldNotes.delete(Math.round(note));
-    if (this.cvHeldNotes.size > 0) {
-      let last = 60;
-      for (const v of this.cvHeldNotes) last = v; // newest = last inserted
-      this.cv.setPitch(last, time);               // re-pitch; gate stays high
-    } else {
-      this.cv.setGate(false, time);
-    }
-  }
-  private cvAllOff(): void {
-    this.cvHeldNotes.clear();
-    this.cv.setGate(false);
+    this.pendingLiveNotes.clearChannel(ch); // drop this channel's still-queued notes
+    this.cvGate.channelOff(ch);             // release only THIS channel's CV ownership
   }
 
   programChange(_ch: number, _program: number, _time?: number): void {
@@ -2069,6 +2107,13 @@ export class AudioPort {
   }
 
   close(): void {
+    // Mark closed FIRST so a still-in-flight worklet load (loadWorklets awaiting
+    // addModule) bails out instead of creating a node on / notifying a dead port.
+    this.isClosed = true;
+    this.polySynthSettledCb = null;
+    this.pendingLiveNotes.clear();
+    this.pendingSynthNotes.length = 0;
+    this.cvGate.allOff();
     // Stop all active drum sources
     for (const src of this.activeDrumSrcs) { try { src.stop(); } catch { /* */ } }
     this.activeDrumSrcs.clear();

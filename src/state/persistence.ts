@@ -8,6 +8,7 @@
 import type { SoundState } from "../sound/types";
 import type { Part } from "../midi/types";
 import { ALL_INPUTS } from "../midi/router";
+import { normalizeSoundState } from "../sound/normalizeState";
 
 // Schema version lives in the key name: a breaking change to the persisted
 // shape bumps this to ".v2", so stale data is simply ignored (loadSettings
@@ -38,13 +39,12 @@ export function loadSettings(): PersistedSettings | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedSettings>;
     if (!parsed || typeof parsed !== "object") return null;
-    // soundState is merged into the engine on load, so reject anything that
-    // isn't a plain object (a string/array/number from a corrupt or older
-    // payload) instead of casting it through. SoundModule then defaults any
-    // individual fields that are missing or out of range.
-    const ss = parsed.soundState;
-    const soundState: Partial<SoundState> =
-      ss && typeof ss === "object" && !Array.isArray(ss) ? (ss as Partial<SoundState>) : {};
+    // soundState is merged into the engine on load. Normalize every nested field
+    // against the defaults here (and again in SoundModule) so corrupt or
+    // hand-edited data — non-array effectOrder, null effects, non-array preset
+    // lists, bad shapes — can't crash mergeState, init, or FX rendering. Invalid
+    // fields are defaulted individually; valid (incl. older partial) state is kept.
+    const soundState: Partial<SoundState> = normalizeSoundState(parsed.soundState);
     return {
       soundState,
       channels: normalizeChannels(parsed.channels),

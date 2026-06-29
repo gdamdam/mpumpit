@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SoundModule } from "../SoundModule";
 import { PART_TO_AUDIO_CH } from "../../midi/types";
+import { DEFAULT_EFFECT_ORDER } from "../types";
 import { FakeAudioEngine } from "../../test/mocks";
 
 function make(opts: { queueLimit?: number } = {}) {
@@ -405,5 +406,160 @@ describe("SoundModule — editing persistence & back-compat", () => {
     });
     expect(sm.isPartModified("synth")).toBe(false); // hydrated to equal the named preset
     expect(sm.getSynthParams("synth")).not.toEqual(sm.getSynthParams("bass")); // got Acid Squelch, not Default
+  });
+});
+
+describe("SoundModule — initialization retry (issue 1)", () => {
+  it("recovers when the first initialization fails and the second succeeds", async () => {
+    const created: FakeAudioEngine[] = [];
+    const sm = new SoundModule({
+      createEngine: () => {
+        const e = new FakeAudioEngine();
+        if (created.length === 0) e.failResume = true; // first attempt rejects in resume()
+        created.push(e);
+        return e;
+      },
+    });
+    await expect(sm.initialize()).rejects.toThrow(/resume failed/);
+    expect(sm.getStatus()).toBe("idle"); // reset so a retry is possible
+    expect(created[0].closed).toBe(true); // partial engine torn down
+
+    await sm.initialize(); // genuine retry
+    expect(sm.ready).toBe(true);
+    expect(created).toHaveLength(2); // a FRESH engine was created
+  });
+
+  it("resets and retries when the engine factory itself throws", async () => {
+    let attempt = 0;
+    const sm = new SoundModule({
+      createEngine: () => {
+        if (attempt++ === 0) throw new Error("ctx blocked");
+        return new FakeAudioEngine();
+      },
+    });
+    await expect(sm.initialize()).rejects.toThrow(/ctx blocked/);
+    expect(sm.getStatus()).toBe("idle");
+    await sm.initialize();
+    expect(sm.ready).toBe(true);
+  });
+
+  it("shares one initialization across concurrent successful calls (idempotent)", async () => {
+    const created: FakeAudioEngine[] = [];
+    const sm = new SoundModule({ createEngine: () => { const e = new FakeAudioEngine(); created.push(e); return e; } });
+    await Promise.all([sm.initialize(), sm.initialize(), sm.initialize()]);
+    expect(sm.ready).toBe(true);
+    expect(created).toHaveLength(1); // only one engine for concurrent calls
+  });
+});
+
+describe("SoundModule — dispose during async init (lifecycle)", () => {
+  it("dispose() mid-initialization never flips back to ready", async () => {
+    const engine = new FakeAudioEngine();
+    engine.polyReady = false; // force the worklet wait so dispose lands mid-init
+    const sm = new SoundModule({ createEngine: () => engine, polySynthTimeoutMs: 30 });
+    const p = sm.initialize();
+    sm.dispose(); // tear down while doInitialize is awaiting
+    await p;
+    expect(sm.getStatus()).toBe("disposed");
+    expect(sm.ready).toBe(false);
+    expect(engine.closed).toBe(true);
+
+    // A late worklet settle after disposal must be ignored (no revival/emit).
+    engine.polyReady = true;
+    engine.settlePolySynth();
+    expect(sm.getStatus()).toBe("disposed");
+  });
+});
+
+describe("SoundModule — late worklet readiness past the timeout (issue 2)", () => {
+  it("clears degraded and re-applies synth/bass settings on a late load", async () => {
+    const engine = new FakeAudioEngine();
+    engine.polyReady = false;
+    engine.polyFailed = false;
+    const sm = new SoundModule({ createEngine: () => engine, polySynthTimeoutMs: 10 });
+    await sm.initialize();
+    expect(sm.ready).toBe(true); // drums usable immediately
+    expect(sm.isDegraded()).toBe(true);
+    expect(sm.getWarning()).toMatch(/still initializing/i);
+
+    const before = engine.callsTo("setSynthParams").length;
+    engine.polyReady = true;
+    engine.settlePolySynth(); // worklet finishes AFTER the timeout
+
+    expect(sm.isDegraded()).toBe(false);
+    expect(sm.getWarning()).toBeNull();
+    // worklet-owned settings re-applied (synth + bass params re-sent)
+    expect(engine.callsTo("setSynthParams").length).toBeGreaterThan(before);
+  });
+
+  it("reports definitive failure when the worklet fails after the timeout", async () => {
+    const engine = new FakeAudioEngine();
+    engine.polyReady = false;
+    const sm = new SoundModule({ createEngine: () => engine, polySynthTimeoutMs: 10 });
+    await sm.initialize();
+    expect(sm.getWarning()).toMatch(/still initializing/i);
+
+    engine.polyFailed = true;
+    engine.settlePolySynth();
+    expect(sm.isDegraded()).toBe(true);
+    expect(sm.getWarning()).toMatch(/failed/i);
+  });
+});
+
+describe("SoundModule — malformed persisted state (issue 3)", () => {
+  const build = (initialState: unknown) =>
+    new SoundModule({ createEngine: () => new FakeAudioEngine(), initialState: initialState as never });
+
+  it("does not throw on a non-array effectOrder and restores the default order", () => {
+    const sm = build({ effectOrder: { junk: true } });
+    expect(() => sm.getEffectChain("master")).not.toThrow();
+    const ids = sm.getEffectChain("master").items.map((i) => i.id);
+    expect(ids).toEqual(expect.arrayContaining([...DEFAULT_EFFECT_ORDER, "duck"]));
+  });
+
+  it("drops unknown/duplicate effects and restores each missing one exactly once", () => {
+    const order = build({ effectOrder: ["reverb", "reverb", "bogus", "delay"] }).getState().effectOrder;
+    expect(new Set(order).size).toBe(order.length); // no duplicates
+    expect(order).not.toContain("bogus"); // unknown dropped
+    expect(order.filter((e) => e === "reverb")).toHaveLength(1);
+    expect(order).toEqual(expect.arrayContaining(DEFAULT_EFFECT_ORDER)); // all defaults present
+  });
+
+  it("replaces a null / non-object effect with its default but keeps valid fields", () => {
+    const sm = build({ effects: { delay: null, reverb: 5, compressor: { on: "yes", threshold: -10 } } });
+    expect(() => sm.getEffectChain("master")).not.toThrow();
+    const eff = sm.getState().effects;
+    expect(typeof eff.delay).toBe("object");
+    expect(eff.delay.on).toBe(false); // defaulted
+    expect(eff.compressor.on).toBe(true); // truthy coerced to boolean
+    expect(eff.compressor.threshold).toBe(-10); // valid value preserved
+  });
+
+  it("defaults non-array user-preset collections but keeps valid ones", () => {
+    const sm = build({ userPresets: { synth: "nope", bass: 5, drums: [{ name: "Kit", voices: {} }] } });
+    expect(sm.getUserPresetNames("synth")).toEqual([]);
+    expect(sm.getUserPresetNames("drums")).toContain("Kit");
+  });
+
+  it("clamps out-of-range numerics (bpm/volume) to valid bounds", () => {
+    const st = build({ bpm: 5000, masterVolume: 9 }).getState();
+    expect(st.bpm).toBe(300);
+    expect(st.masterVolume).toBe(1);
+  });
+
+  it("tolerates invalid parts/strip/voices/drumMap shapes without throwing", () => {
+    const sm = build({
+      parts: { synth: "x", drums: { volume: "loud", strip: 5, voices: [1, 2, 3] } },
+      drumMap: [1, 2, 3],
+    });
+    expect(() => sm.getState()).not.toThrow();
+    expect(() => sm.getEffectChain("synth")).not.toThrow();
+    expect(sm.getDrumMap()).toEqual({}); // array drumMap → empty
+  });
+
+  it("never throws on a wholly garbage payload", () => {
+    expect(() =>
+      build({ masterVolume: "x", bpm: {}, effects: 7, effectOrder: 9, parts: 3, userPresets: 1, drumMap: "z" }).getState(),
+    ).not.toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import { App } from "../App";
 import { FakeAudioEngine, FakeMIDIAccess, FakeMIDIInput, installFakeMidi } from "../../test/mocks";
@@ -164,5 +164,56 @@ describe("App — end to end with mocked Web MIDI + Web Audio", () => {
     await screen.findByRole("option", { name: "Test Controller" });
     const synthCh2 = screen.getAllByLabelText(/Incoming MIDI channel/i)[0] as HTMLInputElement;
     expect(synthCh2.value).toBe("5");
+  });
+
+  it("flushes a pending change on pagehide before the 300ms debounce (P4)", async () => {
+    render(<App createEngine={() => engine} />);
+    await screen.findByRole("option", { name: "Test Controller" });
+
+    // Change BPM → schedules a debounced save that has NOT fired yet.
+    fireEvent.change(screen.getByLabelText(/Tempo in BPM/i), { target: { value: "176" } });
+    // Navigate away (refresh/close) immediately.
+    fireEvent(window, new Event("pagehide"));
+
+    const raw = localStorage.getItem("mpumpit.settings.v1");
+    expect(raw && JSON.parse(raw).soundState.bpm).toBe(176);
+  });
+
+  it("flushes a pending change on unmount before the debounce (P4)", async () => {
+    const { unmount } = render(<App createEngine={() => engine} />);
+    await screen.findByRole("option", { name: "Test Controller" });
+
+    fireEvent.change(screen.getByLabelText(/Tempo in BPM/i), { target: { value: "168" } });
+    unmount(); // effect cleanup must flush before clearing the timer
+
+    const raw = localStorage.getItem("mpumpit.settings.v1");
+    expect(raw && JSON.parse(raw).soundState.bpm).toBe(168);
+  });
+
+  it("a reset wipe is not undone by a trailing pagehide flush (P4)", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    // Replace window.location for this test so resetSettings' reload() doesn't hit
+    // jsdom's unimplemented navigation. App only calls location.reload().
+    const realLocation = window.location;
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", { configurable: true, value: { ...realLocation, href: realLocation.href, reload } });
+    try {
+      render(<App createEngine={() => engine} />);
+      await screen.findByRole("option", { name: "Test Controller" });
+
+      // Make a pending change, then reset all settings.
+      fireEvent.change(screen.getByLabelText(/Tempo in BPM/i), { target: { value: "140" } });
+      fireEvent.click(screen.getByRole("button", { name: "Settings and help" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reset all settings" }));
+      expect(localStorage.getItem("mpumpit.settings.v1")).toBeNull(); // wiped
+
+      expect(reload).toHaveBeenCalled();
+      // The reload fires pagehide/unmount — a trailing flush must NOT resurrect it.
+      fireEvent(window, new Event("pagehide"));
+      expect(localStorage.getItem("mpumpit.settings.v1")).toBeNull();
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: realLocation });
+      confirmSpy.mockRestore();
+    }
   });
 });

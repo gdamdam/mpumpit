@@ -43,4 +43,24 @@ describe("persistence", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ soundState: [1, 2, 3], selectedInputId: "x" }));
     expect(loadSettings()?.soundState).toEqual({});
   });
+
+  it("normalizes malformed nested soundState without dropping valid fields", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      soundState: {
+        bpm: 5000,                       // out of range → clamp
+        masterVolume: 0.42,              // valid → keep
+        effectOrder: { not: "an array" }, // invalid → default order
+        effects: { delay: null },        // null effect → default
+        userPresets: { synth: "nope" },  // non-array → []
+      },
+      selectedInputId: "x",
+    }));
+    const s = loadSettings();
+    expect(s).not.toBeNull();
+    expect(s!.soundState.bpm).toBe(300);            // clamped
+    expect(s!.soundState.masterVolume).toBe(0.42);  // preserved
+    expect(Array.isArray(s!.soundState.effectOrder)).toBe(true);
+    expect(s!.soundState.effects!.delay).toMatchObject({ on: false });
+    expect(s!.soundState.userPresets!.synth).toEqual([]);
+  });
 });
