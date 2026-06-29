@@ -3,6 +3,20 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-06-28
+
+### Fixed
+- **Still no MIDI received on v0.4.0.** Inputs were attached with
+  `addEventListener("midimessage")`, but Chrome only *opens* an input port — and
+  only dispatches messages — when the `onmidimessage` IDL attribute is set, so a
+  virtual bus (macOS IAC / loopMIDI) delivered nothing. Now set `onmidimessage`
+  directly. Also guard against React StrictMode attaching a zombie listener set.
+
+### Added
+- A small **diagnostics line** under MIDI IN: messages received, inputs being
+  listened to, AudioContext state, and synth-engine status — so the signal path
+  is visible at a glance.
+
 ## [0.4.0] — 2026-06-28
 
 ### Fixed

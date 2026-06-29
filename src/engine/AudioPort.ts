@@ -1204,6 +1204,11 @@ export class AudioPort {
     this.rebuildFxChain();
   }
 
+  /** Current AudioContext state ("running" | "suspended" | "closed"). */
+  getContextState(): string {
+    return this.ctx.state;
+  }
+
   /** Update a drum voice's params and regenerate its buffer. */
   setDrumVoice(note: number, params: Partial<DrumVoiceParams>): void {
     const current = this.drumVoiceParams.get(note) ?? { ...DEFAULT_DRUM_VOICE };

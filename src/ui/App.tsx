@@ -262,6 +262,13 @@ export function App({ createEngine }: AppProps = {}) {
         onRetry={() => void router?.enable().then((p) => { setPermission(p); setInputs(router.listInputs()); })}
       />
 
+      <div className="diag" title="Diagnostics: messages received · inputs listened to · audio state · synth engine">
+        MIDI rx <b>{router?.getReceivedCount() ?? 0}</b>
+        {" · listening "}<b>{router?.getListenerCount() ?? 0}</b>
+        {" · audio "}<b>{sm?.getContextState() ?? (status === "ready" ? "?" : "not started")}</b>
+        {" · engine "}<b>{sm?.isDegraded() ? "failed" : sm?.ready ? "ready" : "—"}</b>
+      </div>
+
       <div className="kbd-bar">
         <button type="button" className={`ctl-toggle${qwertyOn ? " is-on" : ""}`} aria-pressed={qwertyOn}
           onClick={() => toggleQwerty(!qwertyOn)} title="Play with your computer keyboard (Ableton layout)">

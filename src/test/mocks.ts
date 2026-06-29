@@ -59,6 +59,7 @@ export class FakeAudioEngine implements AudioEngine {
   flushFxTails() { this.rec("flushFxTails"); }
   isPolySynthReady(): boolean { return this.polyReady; }
   didPolySynthFail(): boolean { return this.polyFailed; }
+  getContextState(): string { return "running"; }
   async resume(): Promise<void> { this.resumed = true; this.rec("resume"); }
   close(): void { this.closed = true; this.rec("close"); }
 }
@@ -69,6 +70,7 @@ type Listener = (e: { data: Uint8Array }) => void;
 
 export class FakeMIDIInput {
   state: "connected" | "disconnected" = "connected";
+  onmidimessage: Listener | null = null;
   private listeners = new Set<Listener>();
 
   constructor(
@@ -83,12 +85,14 @@ export class FakeMIDIInput {
   removeEventListener(type: string, cb: EventListenerOrEventListenerObject) {
     if (type === "midimessage") this.listeners.delete(cb as unknown as Listener);
   }
-  /** Simulate an inbound MIDI message. */
+  open() { return Promise.resolve(this); }
+  /** Simulate an inbound MIDI message (delivers to both attach styles). */
   send(bytes: number[]) {
     const data = Uint8Array.from(bytes);
     this.listeners.forEach((l) => l({ data }));
+    this.onmidimessage?.({ data });
   }
-  get listenerCount() { return this.listeners.size; }
+  get listenerCount() { return this.listeners.size + (this.onmidimessage ? 1 : 0); }
 }
 
 export class FakeMIDIAccess {

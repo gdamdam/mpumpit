@@ -61,6 +61,8 @@ export class MidiRouter {
 
   private access: MIDIAccess | null = null;
   private permission: MidiPermissionState = "idle";
+  private disposed = false;
+  private rxCount = 0;
 
   // inputId -> bound message handler currently attached
   private handlers = new Map<string, (e: MIDIMessageEvent) => void>();
@@ -96,14 +98,19 @@ export class MidiRouter {
       this.onStateChange?.();
       return this.permission;
     }
+    let access: MIDIAccess;
     try {
       // sysex:false — we never need it, and it avoids an extra permission prompt.
-      this.access = await navigator.requestMIDIAccess({ sysex: false });
+      access = await navigator.requestMIDIAccess({ sysex: false });
     } catch {
       this.permission = "denied";
       this.onStateChange?.();
       return this.permission;
     }
+    // Guard against React StrictMode's mount→unmount→mount: if we were disposed
+    // while requestMIDIAccess was pending, don't attach a zombie listener set.
+    if (this.disposed) return this.permission;
+    this.access = access;
     this.permission = "granted";
     // Hot-plug: refresh listeners + notify UI whenever the device set changes.
     this.access.onstatechange = () => this.handleStateChange();
@@ -133,6 +140,16 @@ export class MidiRouter {
   /** True when the current selection has at least one connected input. */
   hasActiveInput(): boolean {
     return this.handlers.size > 0;
+  }
+
+  /** Number of inputs currently being listened to (diagnostics). */
+  getListenerCount(): number {
+    return this.handlers.size;
+  }
+
+  /** Count of channel-voice messages received since start (diagnostics). */
+  getReceivedCount(): number {
+    return this.rxCount;
   }
 
   setSelectedInput(id: string): void {
@@ -167,10 +184,11 @@ export class MidiRouter {
       if (input.state !== "connected") return;
       if (this.selectedInputId !== ALL_INPUTS && input.id !== this.selectedInputId) return;
       const handler = (e: MIDIMessageEvent) => this.handleMessage(input.id, e.data);
-      input.addEventListener("midimessage", handler as EventListener);
-      // Some browsers don't implicitly open a port when you only addEventListener
-      // (the spec opens it on setting `onmidimessage`), so messages never arrive.
-      // Open it explicitly. `.open()` returns a promise; ignore failures.
+      // Set `onmidimessage` (the IDL attribute), NOT addEventListener: per the
+      // Web MIDI spec this is what implicitly OPENS the input port, and Chrome
+      // only delivers messages from an open port. addEventListener alone leaves
+      // the port closed, so virtual buses (macOS IAC, loopMIDI) stay silent.
+      input.onmidimessage = handler;
       try { void (input as unknown as { open?: () => Promise<unknown> }).open?.(); } catch { /* */ }
       this.handlers.set(input.id, handler);
     });
@@ -179,8 +197,7 @@ export class MidiRouter {
   private detachListeners(): void {
     if (this.access) {
       this.access.inputs.forEach((input) => {
-        const h = this.handlers.get(input.id);
-        if (h) input.removeEventListener("midimessage", h as EventListener);
+        if (this.handlers.has(input.id)) input.onmidimessage = null;
       });
     }
     this.handlers.clear();
@@ -209,7 +226,10 @@ export class MidiRouter {
     // Blink the MIDI-IN indicator for any real message, even on an unrouted
     // channel — so "device sending but silent" is visible (channel mismatch)
     // vs "nothing arriving" (connection problem).
-    if (ev.kind === "noteOn" || ev.kind === "noteOff" || ev.kind === "allNotesOff") this.onRawActivity?.();
+    if (ev.kind === "noteOn" || ev.kind === "noteOff" || ev.kind === "allNotesOff") {
+      this.rxCount++;
+      this.onRawActivity?.();
+    }
     switch (ev.kind) {
       case "noteOn":
         this.routeNoteOn(inputId, ev.channel, ev.note, ev.velocity);
@@ -287,8 +307,7 @@ export class MidiRouter {
     }
     if (this.handlers.has(inputId) && this.access) {
       const input = this.access.inputs.get(inputId);
-      const h = this.handlers.get(inputId);
-      if (input && h) input.removeEventListener("midimessage", h as EventListener);
+      if (input) input.onmidimessage = null;
       this.handlers.delete(inputId);
     }
   }
@@ -326,6 +345,7 @@ export class MidiRouter {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.detachListeners();
     if (this.access) this.access.onstatechange = null;
     this.owners.clear();

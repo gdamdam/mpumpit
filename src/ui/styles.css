@@ -89,6 +89,13 @@ html, body {
   text-decoration: underline; padding: 0; font: inherit;
 }
 
+/* ── Diagnostics line ───────────────────────────────────────────────────── */
+.diag {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+  color: var(--muted); padding: 7px 4px; border-bottom: 1px solid var(--line);
+}
+.diag b { color: var(--label); font-weight: 600; }
+
 /* ── Keyboard bar ───────────────────────────────────────────────────────── */
 .kbd-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

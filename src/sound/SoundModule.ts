@@ -45,6 +45,7 @@ export interface AudioEngine {
   flushFxTails(): void;
   isPolySynthReady(): boolean;
   didPolySynthFail(): boolean;
+  getContextState(): string;
   resume(): Promise<void>;
   close(): void;
 }
@@ -203,6 +204,11 @@ export class SoundModule {
   /** A human-readable warning when something is degraded, else null. */
   getWarning(): string | null {
     return this.warning;
+  }
+
+  /** AudioContext state for diagnostics ("running"/"suspended"/null). */
+  getContextState(): string | null {
+    return this.engine?.getContextState() ?? null;
   }
 
   async resume(): Promise<void> {
