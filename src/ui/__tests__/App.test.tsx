@@ -129,6 +129,23 @@ describe("App — end to end with mocked Web MIDI + Web Audio", () => {
     expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([9, 38, 100]);
   });
 
+  it("opens the sound editor, auditions a note, and returns", async () => {
+    render(<App createEngine={() => engine} />);
+    await screen.findByRole("option", { name: "Test Controller" });
+    fireEvent.click(screen.getByRole("button", { name: /Start Audio/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Start Audio/i })).toBeNull());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]); // synth row
+    expect(screen.getByText("SYNTH editor")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Test/ })); // audition middle C on synth
+    expect(engine.callsTo("liveNoteOn").map((c) => c.args)).toContainEqual([0, 60, 110]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Back/ }));
+    expect(screen.queryByText("SYNTH editor")).toBeNull();
+    expect(screen.getByRole("button", { name: "PANIC" })).toBeInTheDocument();
+  });
+
   it("persists settings (channel edit) across remounts", async () => {
     const { unmount } = render(<App createEngine={() => engine} />);
     await screen.findByRole("option", { name: "Test Controller" });

@@ -3,6 +3,19 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-06-29
+
+### Added
+- **Sound editor.** Each part's **Edit** button opens a full-screen, full-parity
+  editor: synth/bass OSCILLATOR / FILTER / LFO with live **ADSR**, **filter
+  response** and **LFO** visualizations; drums with a per-voice picker, all voice
+  params, and a **▶ Test** audition. Presets are a live override that persists
+  (a **✎** marks an edited part); **Save as…** stores named **user presets** in
+  localStorage, **Reset** reloads the preset.
+- Saved state now includes per-part sound params, drum voices and user presets;
+  older saved state hydrates its params from the named preset (back-compat).
+- README and in-app help (`?`) updated to cover the editor and keyboard.
+
 ## [0.4.4] — 2026-06-29
 
 ### Changed

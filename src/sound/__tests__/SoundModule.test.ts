@@ -273,3 +273,85 @@ describe("SoundModule — persistence round-trip", () => {
     expect(engine2.effects.reverb.on).toBe(true);
   });
 });
+
+describe("SoundModule — sound editing & user presets", () => {
+  let engine: FakeAudioEngine;
+  let sm: SoundModule;
+  beforeEach(async () => { ({ engine, sm } = make()); await sm.initialize(); });
+
+  it("edits synth params and routes them to the engine", () => {
+    sm.setSynthParam("synth", { cutoff: 1234 });
+    expect(sm.getSynthParams("synth").cutoff).toBe(1234);
+    const call = engine.callsTo("setSynthParams").at(-1)!;
+    expect(call.args[0]).toBe(0);
+    expect((call.args[1] as { cutoff: number }).cutoff).toBe(1234);
+  });
+
+  it("marks the part modified, and clears on preset reload", () => {
+    expect(sm.isPartModified("synth")).toBe(false);
+    sm.setSynthParam("synth", { cutoff: 1234 });
+    expect(sm.isPartModified("synth")).toBe(true);
+    sm.setPreset("synth", "Default");
+    expect(sm.isPartModified("synth")).toBe(false);
+  });
+
+  it("selecting a preset replaces the live params", () => {
+    sm.setPreset("synth", "Acid Squelch");
+    const acid = sm.getSynthParams("synth");
+    sm.setPreset("synth", "Default");
+    expect(sm.getSynthParams("synth")).not.toEqual(acid);
+  });
+
+  it("edits a drum voice and routes it to the engine", () => {
+    sm.setDrumVoiceParam(36, { tune: 5 });
+    expect(sm.getDrumVoice(36).tune).toBe(5);
+    expect(engine.callsTo("setDrumVoice").at(-1)!.args[0]).toBe(36);
+  });
+
+  it("saves, recalls and deletes user presets", () => {
+    sm.setSynthParam("synth", { cutoff: 999 });
+    sm.saveUserPreset("synth", "My Lead");
+    expect(sm.getPresetNames("synth")).toContain("My Lead");
+    expect(sm.getUserPresetNames("synth")).toEqual(["My Lead"]);
+    sm.setPreset("synth", "Default");
+    sm.setPreset("synth", "My Lead");
+    expect(sm.getSynthParams("synth").cutoff).toBe(999); // recalled
+    sm.deleteUserPreset("synth", "My Lead");
+    expect(sm.getPresetNames("synth")).not.toContain("My Lead");
+  });
+
+  it("deleting the active user preset falls back to Default", () => {
+    sm.saveUserPreset("synth", "Temp");
+    sm.deleteUserPreset("synth", "Temp");
+    expect(sm.getState().parts.synth.preset).toBe("Default");
+  });
+});
+
+describe("SoundModule — editing persistence & back-compat", () => {
+  it("round-trips edited params, voices and user presets", async () => {
+    const { sm } = make();
+    sm.setSynthParam("bass", { cutoff: 777 });
+    sm.setDrumVoiceParam(38, { decay: 2 });
+    sm.saveUserPreset("synth", "Saved");
+    const state = sm.getState();
+    expect(state.parts.bass.params!.cutoff).toBe(777);
+
+    const engine2 = new FakeAudioEngine();
+    const sm2 = new SoundModule({ createEngine: () => engine2, initialState: state });
+    await sm2.initialize();
+    expect(sm2.getSynthParams("bass").cutoff).toBe(777);
+    expect(sm2.getDrumVoice(38).decay).toBe(2);
+    expect(sm2.getUserPresetNames("synth")).toContain("Saved");
+    expect(engine2.callsTo("setSynthParams").some((c) => (c.args[1] as { cutoff: number }).cutoff === 777)).toBe(true);
+  });
+
+  it("hydrates params from the named preset for pre-editor saved state", () => {
+    const engine = new FakeAudioEngine();
+    const sm = new SoundModule({
+      createEngine: () => engine,
+      initialState: { parts: { synth: { preset: "Acid Squelch", volume: 0.8 } } } as never,
+    });
+    expect(sm.isPartModified("synth")).toBe(false); // hydrated to equal the named preset
+    expect(sm.getSynthParams("synth")).not.toEqual(sm.getSynthParams("bass")); // got Acid Squelch, not Default
+  });
+});

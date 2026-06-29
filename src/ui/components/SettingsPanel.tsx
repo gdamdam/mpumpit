@@ -45,6 +45,26 @@ export function SettingsPanel(props: {
       </section>
 
       <section className="settings-block">
+        <h3>Computer keyboard</h3>
+        <p>
+          Click <b>⌨ Keys</b> to play without MIDI gear (Ableton layout: A = C3, W/E/T/Y/U/O/P black
+          keys, Z/X octave, C/V velocity). Choose which part it plays. For drums the white row is a
+          pad layout (A = kick, S = rim, …). <b>Direct</b> plays the part directly; <b>Over MIDI</b>
+          layers it through channel routing + the drum-map, like an external controller.
+        </p>
+      </section>
+
+      <section className="settings-block">
+        <h3>Editing sounds</h3>
+        <p>
+          Each part's <b>Edit</b> button opens a full editor for its sound — every synth/drum
+          parameter, with live ADSR, filter and LFO views. Presets are the starting point; edits are
+          a live override that persists (a <b>✎</b> marks an edited part). <b>Save as…</b> stores named
+          user presets; <b>Reset</b> reloads the preset; selecting a preset discards edits.
+        </p>
+      </section>
+
+      <section className="settings-block">
         <h3>Drum map · midip → mpump</h3>
         <p>
           midip and mpump both use GM-ish drum notes, but the voices differ. Every midip lane is

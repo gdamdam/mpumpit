@@ -26,6 +26,10 @@ MASTER              vol 85        FX      [ PANIC ]
 - mpump's complete master FX chain (11 effects, reorderable) plus a per-part
   channel strip (EQ / HPF / pan / trance gate), with a global BPM for
   tempo-synced effects.
+- A full **sound editor** per part — every synth/drum parameter, with live ADSR,
+  filter-response and LFO visualizations — plus **Save as…** user presets.
+- A built-in **computer-keyboard** input (Ableton layout) for playing without
+  MIDI gear.
 - A permanent **PANIC** button, persistent settings, and best-effort cleanup on
   page hide.
 
@@ -133,11 +137,37 @@ Parameter changes use mpump's short crossfade rebuild, so editing FX while notes
 play does not click. Changing a preset preserves the current effects (mpump's
 behavior). MIDI Clock messages are ignored safely; clock **sync** is deferred.
 
+## Sound editor
+
+Each part row has an **Edit** button that opens a full-screen editor for that
+part's sound — every engine parameter, with live visual feedback:
+
+- **Synth / bass** — OSCILLATOR (wave + per-type FM/sync/wavetable/unison, ADSR
+  with a live **envelope curve**, detune, sub, gain), FILTER (type/model with a
+  live **response curve**, cutoff, resonance, env, drive), and LFO (shape,
+  target, free/tempo-synced rate, depth, with a shape preview).
+- **Drums** — pick a voice (BD/SD/CH/…), edit its full parameters (tune, decay,
+  level, pan, click, sweep, noise, color, LPF), and **▶ Test** it.
+
+Presets are the starting point; edits are a **live override** that persists. A
+**✎** marks a part whose sound differs from its preset. **Save as…** stores named
+**user presets** (in `localStorage`) alongside the built-ins; **Reset** reloads
+the preset's values; selecting any preset discards edits.
+
+## Computer keyboard
+
+Click **⌨ Keys** to play without MIDI gear, using the Ableton-style layout (A = C3
+home row, W/E/T/Y/U/O/P black keys, Z/X octave, C/V velocity). Pick which part it
+plays. For drums the white row becomes a pad layout (A = kick, S = rim, …).
+**Direct** routing plays the part directly; **Over MIDI** layers it through the
+MIDI router (channels + drum-map apply), like an external controller.
+
 ## Persistence
 
-Input preference, channel routing, presets, volumes, BPM, the full FX chain
-(order / bypass / parameters), per-part strips, and drum-map overrides are saved
-to `localStorage` and restored on load. *Settings → Reset* clears them.
+Input preference, channel routing, presets, per-part volumes + sound params +
+saved user presets, BPM, the full FX chain (order / bypass / parameters),
+per-part strips, and drum-map overrides are saved to `localStorage` and restored
+on load. *Settings → Reset* clears them.
 
 ## Licensing & attribution
 

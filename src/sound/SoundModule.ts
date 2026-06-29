@@ -12,13 +12,13 @@
 //    model) plus a fixed per-part channel strip (EQ / HPF / pan / gate)
 
 import type { EffectName, EffectParams, SynthParams, DrumVoiceParams } from "../engine/types";
-import { DEFAULT_EFFECTS } from "../engine/types";
-import { SYNTH_PRESETS, BASS_PRESETS, DRUM_KIT_PRESETS } from "../engine/soundPresets";
+import { DEFAULT_EFFECTS, DEFAULT_SYNTH_PARAMS, DEFAULT_DRUM_VOICE } from "../engine/types";
+import { SYNTH_PRESETS, BASS_PRESETS, DRUM_KIT_PRESETS, type SynthPreset, type DrumKitPreset } from "../engine/soundPresets";
 import { AudioPort } from "../engine/AudioPort";
 import { PART_TO_AUDIO_CH, type Part } from "../midi/types";
 import {
   MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP,
-  type FxTarget, type FxChain, type FxChainItem, type SoundState, type PartState, type ChannelStrip,
+  type FxTarget, type FxChain, type FxChainItem, type SoundState, type PartState, type ChannelStrip, type UserPresets,
 } from "./types";
 
 /** The subset of AudioPort the facade needs. Lets tests inject a fake engine. */
@@ -90,7 +90,15 @@ export function defaultSoundState(): SoundState {
       bass: defaultPartState("Default"),
       drums: defaultPartState("Default"),
     },
+    userPresets: { synth: [], bass: [], drums: [] },
   };
+}
+
+/** Voices object (note → params) for a drum kit, cloned. */
+function kitVoices(kit: DrumKitPreset): Record<number, DrumVoiceParams> {
+  const out: Record<number, DrumVoiceParams> = {};
+  for (const [note, vp] of Object.entries(kit.voices)) out[Number(note)] = { ...vp };
+  return out;
 }
 
 export class SoundModule {
@@ -121,6 +129,24 @@ export class SoundModule {
     this.state = opts.initialState
       ? mergeState(defaultSoundState(), opts.initialState)
       : defaultSoundState();
+    this.hydrate();
+  }
+
+  // Fill in live params/voices for any part that lacks them (fresh state, or
+  // older saved state from before the editor existed) by seeding from the
+  // part's named preset. Keeps already-edited params intact.
+  private hydrate(): void {
+    for (const part of ["synth", "bass"] as ("synth" | "bass")[]) {
+      if (!this.state.parts[part].params) {
+        const p = this.findSynthPreset(part, this.state.parts[part].preset)
+          ?? (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS)[0];
+        this.state.parts[part].params = structuredClone(p.params);
+      }
+    }
+    if (!this.state.parts.drums.voices) {
+      const kit = this.findKit(this.state.parts.drums.preset) ?? DRUM_KIT_PRESETS[0];
+      this.state.parts.drums.voices = kitVoices(kit);
+    }
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -314,32 +340,126 @@ export class SoundModule {
     }
   }
 
-  // ── Presets / volumes / tempo ──────────────────────────────────────────────
+  // ── Presets ────────────────────────────────────────────────────────────────
 
+  private synthPresetList(part: "synth" | "bass"): SynthPreset[] {
+    const builtins = part === "bass" ? BASS_PRESETS : SYNTH_PRESETS;
+    return [...builtins, ...this.state.userPresets[part]];
+  }
+  private drumKitList(): DrumKitPreset[] {
+    return [...DRUM_KIT_PRESETS, ...this.state.userPresets.drums];
+  }
+  private findSynthPreset(part: "synth" | "bass", name: string): SynthPreset | undefined {
+    return this.synthPresetList(part).find((p) => p.name === name);
+  }
+  private findKit(name: string): DrumKitPreset | undefined {
+    return this.drumKitList().find((k) => k.name === name);
+  }
+
+  /** Built-in preset names followed by the user's saved presets, for this part. */
+  getPresetNames(part: Part): string[] {
+    const builtinNames = part === "drums"
+      ? DRUM_KIT_PRESETS.map((p) => p.name)
+      : (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS).map((p) => p.name);
+    return [...builtinNames, ...this.state.userPresets[part].map((p) => p.name)];
+  }
+  getUserPresetNames(part: Part): string[] {
+    return this.state.userPresets[part].map((p) => p.name);
+  }
+  isUserPreset(part: Part, name: string): boolean {
+    return this.state.userPresets[part].some((p) => p.name === name);
+  }
+
+  /** Select a preset (built-in or user): its values replace the live params. */
   setPreset(part: Part, presetName: string): void {
     this.state.parts[part].preset = presetName;
-    this.applyPreset(part);
+    if (part === "drums") {
+      const kit = this.findKit(presetName) ?? DRUM_KIT_PRESETS[0];
+      this.state.parts.drums.voices = kitVoices(kit);
+    } else {
+      const p = this.findSynthPreset(part, presetName) ?? (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS)[0];
+      this.state.parts[part].params = structuredClone(p.params);
+    }
+    this.applyPart(part);
     this.emit();
   }
 
-  getPresetNames(part: Part): string[] {
-    if (part === "drums") return DRUM_KIT_PRESETS.map((p) => p.name);
-    return (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS).map((p) => p.name);
+  // Apply the part's CURRENT live params/voices to the engine (does NOT reload
+  // the preset — preserves edits across init/reapply).
+  private applyPart(part: Part): void {
+    if (!this.engine) return;
+    if (part === "drums") {
+      const voices = this.state.parts.drums.voices ?? {};
+      for (const [note, vp] of Object.entries(voices)) this.engine.setDrumVoice(Number(note), vp);
+    } else {
+      const params = this.state.parts[part].params;
+      if (params) this.engine.setSynthParams(PART_TO_AUDIO_CH[part], params);
+    }
   }
 
-  private applyPreset(part: Part): void {
-    if (!this.engine) return;
+  // ── Editing (instrument params) ─────────────────────────────────────────────
+
+  getSynthParams(part: Part): SynthParams {
+    return { ...(this.state.parts[part].params ?? DEFAULT_SYNTH_PARAMS) };
+  }
+
+  setSynthParam(part: Part, patch: Partial<SynthParams>): void {
+    if (part === "drums") return;
+    const next = { ...(this.state.parts[part].params ?? DEFAULT_SYNTH_PARAMS), ...patch };
+    this.state.parts[part].params = next;
+    this.engine?.setSynthParams(PART_TO_AUDIO_CH[part], next);
+    this.emit();
+  }
+
+  getDrumVoice(note: number): DrumVoiceParams {
+    return { ...(this.state.parts.drums.voices?.[note] ?? DEFAULT_DRUM_VOICE) };
+  }
+
+  getDrumVoices(): Record<number, DrumVoiceParams> {
+    return structuredClone(this.state.parts.drums.voices ?? {});
+  }
+
+  setDrumVoiceParam(note: number, patch: Partial<DrumVoiceParams>): void {
+    const voices = (this.state.parts.drums.voices ??= {});
+    const next = { ...(voices[note] ?? DEFAULT_DRUM_VOICE), ...patch };
+    voices[note] = next;
+    this.engine?.setDrumVoice(note, next);
+    this.emit();
+  }
+
+  /** True when a part's live params differ from its named preset. */
+  isPartModified(part: Part): boolean {
     const name = this.state.parts[part].preset;
     if (part === "drums") {
-      const kit = DRUM_KIT_PRESETS.find((k) => k.name === name) ?? DRUM_KIT_PRESETS[0];
-      for (const [note, vp] of Object.entries(kit.voices)) {
-        this.engine.setDrumVoice(Number(note), vp);
-      }
-    } else {
-      const list = part === "bass" ? BASS_PRESETS : SYNTH_PRESETS;
-      const preset = list.find((p) => p.name === name) ?? list[0];
-      this.engine.setSynthParams(PART_TO_AUDIO_CH[part], preset.params);
+      const kit = this.findKit(name);
+      if (!kit) return true;
+      return JSON.stringify(this.state.parts.drums.voices ?? {}) !== JSON.stringify(kitVoices(kit));
     }
+    const preset = this.findSynthPreset(part, name);
+    if (!preset) return true;
+    return JSON.stringify(this.state.parts[part].params ?? {}) !== JSON.stringify(preset.params);
+  }
+
+  /** Save the part's current live sound as a named user preset (and select it). */
+  saveUserPreset(part: Part, rawName: string): void {
+    const name = rawName.trim();
+    if (!name) return;
+    if (part === "drums") {
+      upsertPreset(this.state.userPresets.drums, { name, voices: this.getDrumVoices() });
+    } else {
+      upsertPreset(this.state.userPresets[part], { name, params: this.getSynthParams(part) });
+    }
+    this.state.parts[part].preset = name;
+    this.emit();
+  }
+
+  deleteUserPreset(part: Part, name: string): void {
+    const list = this.state.userPresets[part] as { name: string }[];
+    const i = list.findIndex((p) => p.name === name);
+    if (i < 0) return;
+    list.splice(i, 1);
+    if (this.state.parts[part].preset === name) this.setPreset(part, "Default");
+    else this.emit();
   }
 
   setPartVolume(part: Part, volume: number): void {
@@ -599,7 +719,7 @@ export class SoundModule {
     this.engine.setVolume(this.state.masterVolume);
     this.applyFx();
     for (const part of ["synth", "bass", "drums"] as Part[]) {
-      this.applyPreset(part);
+      this.applyPart(part);
       this.engine.setChannelVolume(PART_TO_AUDIO_CH[part], this.state.parts[part].volume);
     }
     this.applyStrips();
@@ -637,11 +757,18 @@ export class SoundModule {
   private applyAfterWorklet(): void {
     if (!this.engine) return;
     for (const part of ["synth", "bass"] as Part[]) {
-      this.applyPreset(part);
+      this.applyPart(part);
       this.engine.setChannelVolume(PART_TO_AUDIO_CH[part], this.state.parts[part].volume);
       for (const id of this.stripEffectsFor(part)) this.applyStripSection(part, id);
     }
   }
+}
+
+/** Replace a same-named preset in `list`, or append it. */
+function upsertPreset<T extends { name: string }>(list: T[], preset: T): void {
+  const i = list.findIndex((p) => p.name === preset.name);
+  if (i >= 0) list[i] = preset;
+  else list.push(preset);
 }
 
 function clamp01(v: number): number {
@@ -661,22 +788,35 @@ function mergeState(base: SoundState, patch: Partial<SoundState>): SoundState {
       bass: mergePart(base.parts.bass, patch.parts?.bass),
       drums: mergePart(base.parts.drums, patch.parts?.drums),
     },
+    userPresets: {
+      synth: [...(patch.userPresets?.synth ?? base.userPresets.synth)],
+      bass: [...(patch.userPresets?.bass ?? base.userPresets.bass)],
+      drums: [...(patch.userPresets?.drums ?? base.userPresets.drums)],
+    },
   };
   return out;
 }
 
 function mergePart(base: PartState, patch?: Partial<PartState>): PartState {
-  if (!patch) return { preset: base.preset, volume: base.volume, strip: structuredCloneStrip(base.strip) };
-  return {
-    preset: patch.preset ?? base.preset,
-    volume: patch.volume ?? base.volume,
-    strip: {
-      eq: { ...base.strip.eq, ...(patch.strip?.eq ?? {}) },
-      hpf: { ...base.strip.hpf, ...(patch.strip?.hpf ?? {}) },
-      pan: patch.strip?.pan ?? base.strip.pan,
-      gate: { ...base.strip.gate, ...(patch.strip?.gate ?? {}) },
-    },
-  };
+  const merged: PartState = patch
+    ? {
+        preset: patch.preset ?? base.preset,
+        volume: patch.volume ?? base.volume,
+        strip: {
+          eq: { ...base.strip.eq, ...(patch.strip?.eq ?? {}) },
+          hpf: { ...base.strip.hpf, ...(patch.strip?.hpf ?? {}) },
+          pan: patch.strip?.pan ?? base.strip.pan,
+          gate: { ...base.strip.gate, ...(patch.strip?.gate ?? {}) },
+        },
+      }
+    : { preset: base.preset, volume: base.volume, strip: structuredCloneStrip(base.strip) };
+  // Carry live params/voices through (undefined if neither side has them; the
+  // SoundModule constructor's hydrate() seeds missing ones from the preset).
+  const params = patch?.params ?? base.params;
+  if (params) merged.params = structuredClone(params);
+  const voices = patch?.voices ?? base.voices;
+  if (voices) merged.voices = structuredClone(voices);
+  return merged;
 }
 
 /**

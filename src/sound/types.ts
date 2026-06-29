@@ -1,6 +1,7 @@
 // SoundModule state & FX-facade types. Original work — AGPL-3.0-only.
 
-import type { EffectName, EffectParams } from "../engine/types";
+import type { EffectName, EffectParams, SynthParams, DrumVoiceParams } from "../engine/types";
+import type { SynthPreset, DrumKitPreset } from "../engine/soundPresets";
 import type { Part } from "../midi/types";
 
 /** Target for the FX facade: the master bus or one part's channel strip. */
@@ -45,9 +46,19 @@ export const DEFAULT_CHANNEL_STRIP: ChannelStrip = {
 };
 
 export interface PartState {
-  preset: string; // preset name (resolved against soundPresets)
+  preset: string; // preset name (built-in or user); the starting point
   volume: number; // 0..1
   strip: ChannelStrip;
+  // Live, editable instrument params (override the preset; persisted).
+  params?: SynthParams; // synth & bass
+  voices?: Record<number, DrumVoiceParams>; // drums — keyed by drum note
+}
+
+/** Named custom presets saved by the user (persisted alongside the built-ins). */
+export interface UserPresets {
+  synth: SynthPreset[];
+  bass: SynthPreset[];
+  drums: DrumKitPreset[];
 }
 
 /** Full serializable state owned by the SoundModule. */
@@ -58,6 +69,7 @@ export interface SoundState {
   effectOrder: EffectName[];
   drumMap: Record<number, number>; // incoming-note → mpump-note overrides
   parts: Record<Part, PartState>;
+  userPresets: UserPresets;
 }
 
 /** One item in a chain returned by getEffectChain(). */

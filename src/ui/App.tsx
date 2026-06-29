@@ -11,6 +11,7 @@ import { loadSettings, saveSettings, clearSettings } from "../state/persistence"
 import { Led, Slider, Select } from "./components/Controls";
 import { FxPanel } from "./components/FxPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { EditorView } from "./views/EditorView";
 
 const PART_LABEL: Record<Part, string> = { synth: "SYNTH", bass: "BASS", drums: "DRUMS" };
 
@@ -42,6 +43,7 @@ export function App({ createEngine }: AppProps = {}) {
   const [midiBlink, setMidiBlink] = useState(false);
   const [openFx, setOpenFx] = useState<FxTarget | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [editing, setEditing] = useState<Part | null>(null);
   const [qwertyOn, setQwertyOn] = useState(false);
   const [qwertyTarget, setQwertyTarget] = useState<Part>("synth");
   const [qwertyOverMidi, setQwertyOverMidi] = useState(false);
@@ -220,6 +222,14 @@ export function App({ createEngine }: AppProps = {}) {
     setQwertyOverMidi(overMidi);
   };
   const panic = (hard: boolean) => { qwertyRef.current?.releaseAll(); if (hard) { router?.releaseAll(); sm?.panic(true); } else { router?.panic(); } };
+  // Audition a note from the editor via the router's direct path (shared
+  // ownership); auto-release after a moment for sustained synth/bass voices.
+  const onTest = (note: number) => {
+    const part = editing;
+    if (!part) return;
+    routerRef.current?.directNoteOn("editor-test", part, note, 110);
+    setTimeout(() => routerRef.current?.directNoteOff("editor-test", part, note), 400);
+  };
 
   const onDrumMapChange = (overrides: Record<number, number>) => {
     sm?.setDrumMap(overrides);
@@ -257,6 +267,10 @@ export function App({ createEngine }: AppProps = {}) {
           onClick={() => setShowSettings(true)}>?</button>
       </div>
 
+      {editing && sm ? (
+        <EditorView sm={sm} part={editing} onBack={() => setEditing(null)} onChange={bump} onTest={onTest} />
+      ) : (
+      <>
       <MidiBay
         led={midiLed}
         permission={permission}
@@ -338,10 +352,13 @@ export function App({ createEngine }: AppProps = {}) {
                 onChange={(name) => setPreset(part, name)}
                 title={part === "drums" ? "Drum kit" : "Preset"}
               />
+              {sm?.isPartModified(part) && <span className="row-mod" title="edited from preset">✎</span>}
               <Slider label="Vol" min={0} max={1} step={0.01}
                 value={st?.parts[part].volume ?? 0.8}
                 onChange={(v) => sm?.setPartVolume(part, v)}
                 format={(v) => `${Math.round(v * 100)}`} />
+              <button type="button" className="ed-btn" onClick={() => setEditing(part)}
+                title={part === "drums" ? "Edit drum kit" : "Edit sound"}>Edit</button>
               <button type="button" className={`fx-btn${openFx === part ? " is-open" : ""}`}
                 aria-expanded={openFx === part} onClick={() => toggleFx(part)}>FX</button>
             </div>
@@ -371,6 +388,8 @@ export function App({ createEngine }: AppProps = {}) {
       {showSettings && sm && (
         <SettingsPanel sm={sm} onDrumMapChange={onDrumMapChange} onReset={resetSettings}
           onClose={() => setShowSettings(false)} />
+      )}
+      </>
       )}
     </div>
   );
