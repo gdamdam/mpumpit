@@ -27,6 +27,12 @@ export { envValueAt } from "./drumSynth";
 
 const DRUM_CH = 9;
 
+/** Clamp to [lo, hi], substituting `fallback` for NaN/Infinity. Used at the
+ *  AudioParam-setter boundary so a stray NaN never poisons a node permanently. */
+function safeClamp(v: number, lo: number, hi: number, fallback = lo): number {
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+}
+
 /** Logical FX source identity. In worklet mode synth+bass share one output ("synthBass"). */
 type SourceKey = "drums" | "synth" | "bass" | "synthBass";
 
@@ -381,17 +387,13 @@ export class AudioPort {
       return;
     }
     try {
-      await Promise.all([
-        this.ctx.audioWorklet.addModule("./worklets/moog-filter.js"),
-        this.ctx.audioWorklet.addModule("./worklets/diode-filter.js"),
-        this.ctx.audioWorklet.addModule("./worklets/bitcrusher.js"),
-        this.ctx.audioWorklet.addModule("./worklets/sync-osc.js"),
-        this.ctx.audioWorklet.addModule("./worklets/fm-osc.js"),
-        this.ctx.audioWorklet.addModule("./worklets/wavetable-osc.js"),
-      ]);
+      // bitcrusher is the only worklet instantiated as a node. The synth's other
+      // models (moog/diode ladder filters, sync/fm/wavetable oscillators) are
+      // implemented inline inside poly-synth.js, so no extra modules are loaded.
+      await this.ctx.audioWorklet.addModule("./worklets/bitcrusher.js");
       this.workletsLoaded = true;
     } catch (e) {
-      console.warn("Optional AudioWorklet modules failed to load, using standard nodes:", e);
+      console.warn("Optional bitcrusher worklet failed to load, using WaveShaper fallback:", e);
       this.workletsLoaded = false;
     }
     // Create persistent poly-synth node. Two stereo outputs: output[0] carries
@@ -602,6 +604,14 @@ export class AudioPort {
 
   /** Update an effect's parameters and rebuild the chain. */
   private fxRebuildTimer = 0;
+  // Deferred graph-rewire timers, tracked so overlapping calls cancel the stale
+  // one instead of racing (a late disconnect tearing down a fresh connection).
+  private antiClipTimer = 0;
+  private channelMonoTimers = new Map<number, number>();
+  // Held synth/bass notes for the mono CV gate (last-note priority). The gate
+  // only drops when this empties, so releasing one of several held notes can't
+  // cut the CV gate while others still sound.
+  private cvHeldNotes = new Set<number>();
   setEffect<K extends EffectName>(name: K, params: Partial<EffectParams[K]>): void {
     const prev = this.fx[name];
     const onChanged = "on" in params && (params as { on?: boolean }).on !== (prev as { on?: boolean }).on;
@@ -927,11 +937,17 @@ export class AudioPort {
         if (this.workletsLoaded) {
           // AudioWorklet bitcrusher: true sample-and-hold + bit reduction
           const crusher = new AudioWorkletNode(this.ctx, "bitcrusher");
-          crusher.parameters.get("bits")!.value = this.fx.bitcrusher.bits;
-          crusher.parameters.get("crushRate")!.value = this.fx.bitcrusher.crushRate ?? this.ctx.sampleRate;
-          prev.connect(crusher);
-          this.fxNodes.push(crusher);
-          return crusher;
+          const bitsParam = crusher.parameters.get("bits");
+          const rateParam = crusher.parameters.get("crushRate");
+          if (bitsParam && rateParam) {
+            bitsParam.value = this.fx.bitcrusher.bits;
+            rateParam.value = this.fx.bitcrusher.crushRate ?? this.ctx.sampleRate;
+            prev.connect(crusher);
+            this.fxNodes.push(crusher);
+            return crusher;
+          }
+          // Param descriptors missing (worklet version mismatch) — fall through
+          // to the WaveShaper fallback instead of throwing mid-rebuild.
         }
         // Fallback: WaveShaperNode quantization (no sample rate reduction)
         const preGain = this.ctx.createGain();
@@ -1131,16 +1147,14 @@ export class AudioPort {
       this.playDrum(note, vel, time);
     } else {
       this.playSynth(ch, note, vel, time);
-      // Send CV pitch + gate for synth notes
-      this.cv.setPitch(note, time);
-      this.cv.setGate(true, time);
+      this.cvNoteOn(note, time);
     }
   }
 
   noteOff(ch: number, note: number, time?: number): void {
     if (ch === DRUM_CH) return; // drums are one-shots
     this.releaseSynth(ch, note, time);
-    this.cv.setGate(false, time);
+    this.cvNoteOff(note, time);
   }
 
   /** Live keyboard noteOn — gate:0 so worklet sustains until liveNoteOff rather than auto-releasing. */
@@ -1151,8 +1165,7 @@ export class AudioPort {
     }
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "noteOn", channel: ch, note, vel, gate: 0 });
-      this.cv.setPitch(note);
-      this.cv.setGate(true);
+      this.cvNoteOn(note);
     }
   }
 
@@ -1160,7 +1173,7 @@ export class AudioPort {
     if (ch === DRUM_CH) return;
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "noteOff", channel: ch, note });
-      this.cv.setGate(false);
+      this.cvNoteOff(note);
     }
   }
 
@@ -1169,6 +1182,33 @@ export class AudioPort {
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "allNotesOff", channel: ch });
     }
+    this.cvAllOff();
+  }
+
+  // ── CV gate ref-counting (added for mpumpit) ─────────────────────────────
+  // CVOutput exposes a single mono gate. Track held synth/bass notes here so
+  // the gate only falls when the last note releases (last-note priority for
+  // pitch), and clamp the note so a stray value can't reach the CV AudioParam.
+  private cvNoteOn(note: number, time?: number): void {
+    const n = safeClamp(Math.round(note), 0, 127, 60);
+    this.cvHeldNotes.delete(n);
+    this.cvHeldNotes.add(n); // (re)insert as most-recent
+    this.cv.setPitch(n, time);
+    this.cv.setGate(true, time);
+  }
+  private cvNoteOff(note: number, time?: number): void {
+    this.cvHeldNotes.delete(Math.round(note));
+    if (this.cvHeldNotes.size > 0) {
+      let last = 60;
+      for (const v of this.cvHeldNotes) last = v; // newest = last inserted
+      this.cv.setPitch(last, time);               // re-pitch; gate stays high
+    } else {
+      this.cv.setGate(false, time);
+    }
+  }
+  private cvAllOff(): void {
+    this.cvHeldNotes.clear();
+    this.cv.setGate(false);
   }
 
   programChange(_ch: number, _program: number, _time?: number): void {
@@ -1243,19 +1283,22 @@ export class AudioPort {
 
   /** Update BPM for tempo-synced LFO and delay. */
   setBpm(bpm: number): void {
-    if (bpm === this.bpm) return;
-    this.bpm = bpm;
+    // Clamp at the engine boundary too (not just SoundModule): bpm feeds 60/bpm
+    // time math, so 0/NaN would yield Infinity step durations and stuck timers.
+    const b = safeClamp(bpm, 20, 300, 120);
+    if (b === this.bpm) return;
+    this.bpm = b;
     // Re-apply active trance gates — LFO rates and pattern step durations
     // are derived from BPM at creation and would otherwise drift off-tempo.
     for (const [ch, g] of this.channelGateSettings) {
       this.setChannelGate(ch, true, g.rate, g.depth, g.shape, g.mode, g.pattern);
     }
     if (this.polySynth) {
-      this.polySynth.port.postMessage({ type: "bpm", bpm });
+      this.polySynth.port.postMessage({ type: "bpm", bpm: b });
       // Re-sync LFO rates for tempo-synced channels
       for (const [ch, params] of this.channelParams) {
         if (ch !== 9 && params.lfoSync) {
-          this.polySynth.port.postMessage({ type: "params", channel: ch, lfoSyncRate: lfoDivisionToHz(params.lfoDivision, bpm) });
+          this.polySynth.port.postMessage({ type: "params", channel: ch, lfoSyncRate: lfoDivisionToHz(params.lfoDivision, b) });
         }
       }
     }
@@ -1353,11 +1396,12 @@ export class AudioPort {
 
   /** Set per-channel EQ gains in dB (-12 to +12). */
   setChannelEQ(ch: number, low: number, mid: number, high: number): void {
-    const eq = this.channelEQs.get(ch);
-    if (!eq) { this.getChannelBus(ch); return this.setChannelEQ(ch, low, mid, high); }
-    eq[0].gain.value = Math.max(-12, Math.min(12, low));
-    eq[1].gain.value = Math.max(-12, Math.min(12, mid));
-    eq[2].gain.value = Math.max(-12, Math.min(12, high));
+    let eq = this.channelEQs.get(ch);
+    if (!eq) { this.getChannelBus(ch); eq = this.channelEQs.get(ch); }
+    if (!eq) return; // bus creation failed — avoid infinite recursion
+    eq[0].gain.value = safeClamp(low, -12, 12, 0);
+    eq[1].gain.value = safeClamp(mid, -12, 12, 0);
+    eq[2].gain.value = safeClamp(high, -12, 12, 0);
   }
 
   getChannelEQ(ch: number): { low: number; mid: number; high: number } {
@@ -1419,7 +1463,12 @@ export class AudioPort {
 
     const eq = this.channelEQs.get(ch);
     const panner = this.channelPanners.get(ch);
-    if (!eq || !panner) { this.getChannelBus(ch); return this.setChannelGate(ch, on, rate, depth, shape, mode, pattern); }
+    if (!eq || !panner) {
+      this.getChannelBus(ch);
+      // Only recurse if the bus actually materialized — otherwise we'd loop forever.
+      if (!this.channelEQs.get(ch) || !this.channelPanners.get(ch)) return;
+      return this.setChannelGate(ch, on, rate, depth, shape, mode, pattern);
+    }
     const eqOut = eq[2];
     const monoNode = this.channelMonoState.get(ch) ? this.channelMonoNodes.get(ch) : null;
     const nextNode = monoNode ?? panner;
@@ -1486,7 +1535,10 @@ export class AudioPort {
         const ct = this.ctx.currentTime;
         // Clear ALL automation to prevent timeline buildup (past events accumulate)
         gate.gain.cancelScheduledValues(0);
-        gate.gain.setValueAtTime(mutedGain, ct);
+        // Re-anchor at the node's CURRENT value, not mutedGain — clearing the
+        // timeline mid-ramp and jumping straight to mutedGain was an audible
+        // click once per reschedule (every half-bar) at high depth.
+        gate.gain.setValueAtTime(gate.gain.value, ct);
         // Schedule bars until we're 2 bars ahead
         while (nextBar < ct + barDur * 2) {
           scheduleBar(nextBar);
@@ -1577,6 +1629,11 @@ export class AudioPort {
     if (!eq || !panner) return;
     const eqOut = eq[2]; // eqHigh is the last EQ node before panner
 
+    // Cancel any pending deferred disconnect for this channel so a rapid toggle
+    // can't let a stale timeout tear down the path we just rewired.
+    const pending = this.channelMonoTimers.get(ch);
+    if (pending) { clearTimeout(pending); this.channelMonoTimers.delete(ch); }
+
     if (mono) {
       let monoNode = this.channelMonoNodes.get(ch);
       if (!monoNode) {
@@ -1589,12 +1646,18 @@ export class AudioPort {
       // Connect new path first, then disconnect old (glitch-free)
       eqOut.connect(monoNode);
       monoNode.connect(panner);
-      setTimeout(() => { try { eqOut.disconnect(panner); } catch { /* */ } }, 5);
+      this.channelMonoTimers.set(ch, window.setTimeout(() => {
+        this.channelMonoTimers.delete(ch);
+        try { eqOut.disconnect(panner); } catch { /* */ }
+      }, 5));
     } else {
       // Connect direct path first, then disconnect mono node
       eqOut.connect(panner);
       const monoNode = this.channelMonoNodes.get(ch);
-      if (monoNode) setTimeout(() => { try { monoNode.disconnect(); } catch { /* */ } }, 5);
+      if (monoNode) this.channelMonoTimers.set(ch, window.setTimeout(() => {
+        this.channelMonoTimers.delete(ch);
+        try { monoNode.disconnect(); } catch { /* */ }
+      }, 5));
     }
   }
 
@@ -1617,7 +1680,8 @@ export class AudioPort {
   /** Set anti-clip mode: "limiter", "hybrid", or "off". Reconnects audio graph. */
   /** Set drive gain in dB (-6 to +12). */
   setDrive(db: number): void {
-    this.driveGain.gain.value = Math.pow(10, db / 20);
+    // Guard NaN (→ unity) so a bad value can't poison the gain node permanently.
+    this.driveGain.gain.value = Math.pow(10, safeClamp(db, -24, 24, 0) / 20);
   }
 
   getDrive(): number {
@@ -1721,8 +1785,11 @@ export class AudioPort {
       this.fxOutput.gain.linearRampToValueAtTime(1, now + FADE);
     };
 
-    // Schedule rewire after fade-out completes
-    setTimeout(rewire, FADE * 1000 + 2);
+    // Schedule rewire after fade-out completes. Cancel any pending rewire first
+    // so back-to-back setAntiClipMode/setLowCut/setMultibandEnabled calls can't
+    // race two rewires that disconnect each other's nodes (→ silent master out).
+    clearTimeout(this.antiClipTimer);
+    this.antiClipTimer = window.setTimeout(rewire, FADE * 1000 + 2);
   }
 
   getAntiClipMode(): "off" | "limiter" | "hybrid" {
@@ -1755,9 +1822,9 @@ export class AudioPort {
 
   /** Set master 3-band EQ gains in dB (-12 to +12). */
   setEQ(low: number, mid: number, high: number): void {
-    this.eqLow.gain.value = Math.max(-12, Math.min(12, low));
-    this.eqMid.gain.value = Math.max(-12, Math.min(12, mid));
-    this.eqHigh.gain.value = Math.max(-12, Math.min(12, high));
+    this.eqLow.gain.value = safeClamp(low, -12, 12, 0);
+    this.eqMid.gain.value = safeClamp(mid, -12, 12, 0);
+    this.eqHigh.gain.value = safeClamp(high, -12, 12, 0);
   }
 
   getEQ(): { low: number; mid: number; high: number } {
@@ -1766,7 +1833,7 @@ export class AudioPort {
 
   /** Set master output boost (linear gain, e.g. 1.0 = unity, 2.0 = +6dB). */
   setMasterBoost(gain: number): void {
-    this.masterBoost.gain.value = Math.max(0.5, Math.min(3, gain));
+    this.masterBoost.gain.value = safeClamp(gain, 0.5, 3, 1);
   }
 
   /** Set stereo width (0 = mono-compatible, 1 = full width). Controls Haas effect level. */
@@ -2011,8 +2078,11 @@ export class AudioPort {
       if (gate.lfo) try { gate.lfo.stop(); } catch { /* */ }
     }
     this.channelGates.clear();
-    // Clean up FX rebuild timer
+    // Clean up deferred graph-rewire timers
     clearTimeout(this.fxRebuildTimer);
+    clearTimeout(this.antiClipTimer);
+    for (const t of this.channelMonoTimers.values()) clearTimeout(t);
+    this.channelMonoTimers.clear();
     // Clean up Safari fix listeners
     clearInterval(this.heartbeatId);
     if (this.resumeOnInteraction) {
@@ -2101,9 +2171,17 @@ export class AudioPort {
       for (let i = 0; i < 8; i++) {
         const old = iter.next().value;
         if (old) {
+          // Clean up synchronously and return the pooled gain/pan pair now;
+          // null the handler so onended doesn't return the same pair twice.
+          old.onended = null;
           try { old.stop(); } catch { /* */ }
           try { old.disconnect(); } catch { /* */ }
           this.activeDrumSrcs.delete(old);
+          const nodes = this.drumSrcNodes.get(old);
+          if (nodes) {
+            try { nodes.gain.disconnect(); nodes.pan.disconnect(); } catch { /* */ }
+            this.returnDrumNodes(nodes);
+          }
         }
       }
     }

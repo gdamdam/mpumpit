@@ -22,6 +22,8 @@ export function Slider(props: {
         max={max}
         step={step}
         value={value}
+        aria-label={label}
+        aria-valuetext={format ? format(value) : String(value)}
         onChange={(e) => onChange(Number(e.target.value))}
       />
       <span className="ctl-readout">{format ? format(value) : String(value)}</span>

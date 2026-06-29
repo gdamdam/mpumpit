@@ -14,6 +14,13 @@ const MAX_UNISON = 7;
 const VXU = MAX_VOICES * MAX_UNISON;
 const TWOPI = 2 * Math.PI;
 
+// Clamp to [lo, hi], substituting `d` for NaN/Infinity. Filter params reach the
+// audio thread from presets/persistence/UI; an unclamped negative or NaN cutoff
+// drives the Moog/diode ladders unstable, so sanitize at the param boundary.
+function clampNum(v, lo, hi, d) {
+  return Number.isFinite(v) ? (v < lo ? lo : v > hi ? hi : v) : d;
+}
+
 // ── PolyBLEP ──
 function polyblep(t, dt) {
   if (t < dt) { const r = t / dt; return r + r - r * r - 1; }
@@ -329,6 +336,9 @@ class PolySynthProcessor extends AudioWorkletProcessor {
   }
 
   _noteOn(channel, note, vel, gateSec) {
+    // Clamp velocity ≥1: a 0 velocity makes the amp target 0, so the envelope
+    // never advances out of attack and the voice slot leaks until note-off.
+    vel = vel < 1 ? 1 : vel > 127 ? 127 : vel;
     let idx = -1;
     for (let i = 0; i < MAX_VOICES; i++) {
       if (this._active[i] && this._note[i] === note && this._channel[i] === channel) { idx = i; break; }
@@ -401,6 +411,14 @@ class PolySynthProcessor extends AudioWorkletProcessor {
         this._active[i] = 2; this._envStage[i] = 3;
       }
     }
+    // Purge not-yet-fired scheduled noteOns for this channel so a panic / all-
+    // notes-off can't let a parked future note fire after the fact.
+    for (let i = 0; i < this._schedCap; i++) {
+      if (this._schedWhen[i] !== Infinity && this._schedType[i] === 0 &&
+          (channel === undefined || this._schedCh[i] === channel)) {
+        this._schedWhen[i] = Infinity;
+      }
+    }
   }
 
   _setParams(msg) {
@@ -415,25 +433,25 @@ class PolySynthProcessor extends AudioWorkletProcessor {
       if (msg.decay !== undefined) this._chDecay[c] = Math.max(0.01, msg.decay);
       if (msg.sustain !== undefined) this._chSustain[c] = Math.max(0.001, Math.min(1, msg.sustain));
       if (msg.release !== undefined) this._chRelease[c] = Math.max(0.01, msg.release);
-      if (msg.cutoff !== undefined) this._chCutoff[c] = msg.cutoff;
-      if (msg.resonance !== undefined) this._chResonance[c] = msg.resonance;
+      if (msg.cutoff !== undefined) this._chCutoff[c] = clampNum(msg.cutoff, 20, 20000, 4000);
+      if (msg.resonance !== undefined) this._chResonance[c] = clampNum(msg.resonance, 0, 20, 1);
       if (msg.filterOn !== undefined) this._chFilterOn[c] = msg.filterOn ? 1 : 0;
-      if (msg.filterEnvDepth !== undefined) this._chFilterEnvDepth[c] = msg.filterEnvDepth;
-      if (msg.filterDecay !== undefined) this._chFilterDecay[c] = Math.max(0, msg.filterDecay);
-      if (msg.filterDrive !== undefined) this._chFilterDrive[c] = msg.filterDrive;
+      if (msg.filterEnvDepth !== undefined) this._chFilterEnvDepth[c] = clampNum(msg.filterEnvDepth, 0, 1, 0);
+      if (msg.filterDecay !== undefined) this._chFilterDecay[c] = Math.max(0, clampNum(msg.filterDecay, 0, 10, 0));
+      if (msg.filterDrive !== undefined) this._chFilterDrive[c] = clampNum(msg.filterDrive, 0, 1, 0);
       if (msg.subOsc !== undefined) this._chSubOsc[c] = msg.subOsc ? 1 : 0;
-      if (msg.subLevel !== undefined) this._chSubLevel[c] = msg.subLevel;
-      if (msg.detune !== undefined) this._chDetune[c] = msg.detune;
-      if (msg.unison !== undefined) this._chUnison[c] = Math.max(1, Math.min(MAX_UNISON, msg.unison));
-      if (msg.unisonSpread !== undefined) this._chUnisonSpread[c] = msg.unisonSpread;
-      if (msg.syncRatio !== undefined) this._chSyncRatio[c] = msg.syncRatio;
-      if (msg.fmRatio !== undefined) this._chFmRatio[c] = msg.fmRatio;
-      if (msg.fmIndex !== undefined) this._chFmIndex[c] = msg.fmIndex;
-      if (msg.wavetablePos !== undefined) this._chWtPos[c] = msg.wavetablePos;
+      if (msg.subLevel !== undefined) this._chSubLevel[c] = clampNum(msg.subLevel, 0, 1, 0.5);
+      if (msg.detune !== undefined) this._chDetune[c] = clampNum(msg.detune, -100, 100, 0);
+      if (msg.unison !== undefined) this._chUnison[c] = Math.max(1, Math.min(MAX_UNISON, msg.unison | 0));
+      if (msg.unisonSpread !== undefined) this._chUnisonSpread[c] = clampNum(msg.unisonSpread, 0, 100, 25);
+      if (msg.syncRatio !== undefined) this._chSyncRatio[c] = clampNum(msg.syncRatio, 1, 16, 2);
+      if (msg.fmRatio !== undefined) this._chFmRatio[c] = clampNum(msg.fmRatio, 0.5, 16, 2);
+      if (msg.fmIndex !== undefined) this._chFmIndex[c] = clampNum(msg.fmIndex, 0, 100, 5);
+      if (msg.wavetablePos !== undefined) this._chWtPos[c] = clampNum(msg.wavetablePos, 0, 1, 0.5);
       if (msg.wavetable !== undefined && this._wavetables[msg.wavetable]) this._chWtName[c] = msg.wavetable;
       if (msg.lfoOn !== undefined) this._chLfoOn[c] = msg.lfoOn ? 1 : 0;
-      if (msg.lfoRate !== undefined) this._chLfoRate[c] = msg.lfoRate;
-      if (msg.lfoDepth !== undefined) this._chLfoDepth[c] = msg.lfoDepth;
+      if (msg.lfoRate !== undefined) this._chLfoRate[c] = clampNum(msg.lfoRate, 0.01, 50, 2);
+      if (msg.lfoDepth !== undefined) this._chLfoDepth[c] = clampNum(msg.lfoDepth, 0, 1, 0.5);
       if (msg.lfoShape !== undefined) {
         const shapes = { sine: 0, square: 1, triangle: 2, sawtooth: 3 };
         this._chLfoShape[c] = shapes[msg.lfoShape] ?? 0;
@@ -443,8 +461,8 @@ class PolySynthProcessor extends AudioWorkletProcessor {
         this._chLfoTarget[c] = targets[msg.lfoTarget] ?? 0;
       }
       if (msg.lfoSync !== undefined) this._chLfoSync[c] = msg.lfoSync ? 1 : 0;
-      if (msg.lfoSyncRate !== undefined) this._chLfoSyncRate[c] = msg.lfoSyncRate;
-      if (msg.presetGain !== undefined) this._chPresetGain[c] = msg.presetGain;
+      if (msg.lfoSyncRate !== undefined) this._chLfoSyncRate[c] = clampNum(msg.lfoSyncRate, 0.01, 100, 2);
+      if (msg.presetGain !== undefined) this._chPresetGain[c] = clampNum(msg.presetGain, 0, 4, 1);
     }
     if (msg.masterGain !== undefined) this._masterGain = msg.masterGain;
   }

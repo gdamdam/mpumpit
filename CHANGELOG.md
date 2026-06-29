@@ -3,6 +3,47 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] — 2026-06-29
+
+Robustness pass from a full code review — correctness and hardening, no API or
+behavior changes for valid input.
+
+### Fixed
+- **No more silent master output.** The deferred audio-graph rewires behind the
+  anti-clip mode and per-channel mono toggles are now tracked and cancelled, so
+  rapid back-to-back changes can't race two rewires into disconnecting each
+  other's nodes.
+- **Filter params are clamped at the audio thread.** Cutoff / resonance / drive
+  (and the other synth params) are sanitized in the worklet, so a corrupt saved
+  setting or out-of-range preset can no longer drive the Moog/diode ladders
+  unstable with a negative or NaN cutoff.
+- **CV gate is now polyphony-aware.** The 1V/oct CV output ref-counts held notes
+  (last-note priority), so releasing one of several held notes no longer drops
+  the gate while others still sound.
+- **Computer-keyboard octave/velocity** keys (Z/X/C/V) ignore OS key auto-repeat,
+  so holding one no longer walks the value to its limit.
+- AudioParam setters (drive, EQ, master boost, BPM) guard against NaN/∞ so a bad
+  value can't permanently poison a node.
+- Trance-gate pattern reschedule re-anchors at the gate's current level — no more
+  faint click once per bar at high depth.
+- A velocity-0 note can no longer leak a synth voice slot; a bitcrusher worklet
+  mismatch falls back to the WaveShaper path instead of breaking the FX rebuild;
+  PANIC / all-notes-off purges pending scheduled notes.
+- MIDI parsing rejects a leading data byte, masks data to 7 bits, and treats
+  high-rate MTC/song-position as throttled timing (no LED spam).
+- Corrupt/older persisted `soundState` that isn't a plain object is ignored
+  rather than fed into the engine.
+- Drum-map and BPM number inputs guard against empty/NaN entry; **Reset** now
+  confirms before wiping settings.
+
+### Changed
+- Knobs and sliders expose `aria-label` + `aria-valuetext` for screen readers.
+- FX editor shows each effect's real default (not the slider minimum) for unset
+  values like bitcrusher rate.
+- Removed five AudioWorklet modules that were loaded but never instantiated
+  (moog-filter, diode-filter, sync-osc, fm-osc, wavetable-osc) — poly-synth
+  implements those models inline. Trims five network fetches on cold start.
+
 ## [1.0.0] — 2026-06-29
 
 First stable release. Post-review editor hardening:

@@ -82,7 +82,7 @@ export function SettingsPanel(props: {
                   <td>{lane} · {MIDIP_DRUM_LANES[lane]}</td>
                   <td>
                     <input type="number" min={0} max={127} value={target}
-                      onChange={(e) => setTarget(lane, Number(e.target.value))} />
+                      onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) setTarget(lane, Math.max(0, Math.min(127, Math.round(v)))); }} />
                   </td>
                   <td className={playable ? "" : "drum-silent"}>
                     {playable ? MPUMP_DRUM_VOICE_LABELS[target] : "— no voice (silent)"}

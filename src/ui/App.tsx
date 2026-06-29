@@ -247,6 +247,8 @@ export function App({ createEngine }: AppProps = {}) {
     bump();
   };
   const resetSettings = () => {
+    // Destructive + irreversible (hard reload) — confirm first.
+    if (!window.confirm("Reset all mpumpit settings (presets, FX, routing, volumes) and reload?")) return;
     clearSettings();
     location.reload();
   };
@@ -269,7 +271,7 @@ export function App({ createEngine }: AppProps = {}) {
           <span className="ctl-label">BPM</span>
           <input
             type="number" min={20} max={300} value={st?.bpm ?? 120}
-            onChange={(e) => sm?.setBpm(Number(e.target.value))}
+            onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) sm?.setBpm(v); }}
             aria-label="Tempo in BPM (for tempo-synced FX)"
           />
         </div>

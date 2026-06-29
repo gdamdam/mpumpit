@@ -33,4 +33,14 @@ describe("persistence", () => {
     expect(loaded?.channels).toEqual({ synth: 1, bass: 2, drums: 10 });
     expect(loaded?.selectedInputId).toBe("all"); // non-string falls back
   });
+
+  it("coerces a non-object soundState to an empty object (corrupt/old payload)", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ soundState: "garbage", selectedInputId: "x" }));
+    expect(loadSettings()?.soundState).toEqual({});
+  });
+
+  it("coerces an array soundState to an empty object", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ soundState: [1, 2, 3], selectedInputId: "x" }));
+    expect(loadSettings()?.soundState).toEqual({});
+  });
 });

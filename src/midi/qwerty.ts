@@ -14,9 +14,10 @@ export const QWERTY_SEMITONES: Record<string, number> = {
   k: 12, o: 13, l: 14, p: 15, ";": 16,
 };
 
-// Drum-pad layout: the white-key row triggers mpump's 10 drum voices in order
-// (kick, rim, snare, hats, cowbell, crash, clap, ride, cowbell). Used when the
-// keyboard targets the drums part, where chromatic pitches make no sense.
+// Drum-pad layout: the white-key row triggers mpump's 10 drum voices in order —
+// a=kick, s=rim, d=snare, f=closed-hat, g=open-hat, h=cowbell, j=crash, k=clap,
+// l=ride, ;=cowbell. Used when the keyboard targets the drums part, where
+// chromatic pitches make no sense.
 export const QWERTY_DRUM_KEYS: Record<string, number> = {
   a: 36, s: 37, d: 38, f: 42, g: 46, h: 47, j: 49, k: 50, l: 51, ";": 56,
 };
@@ -84,10 +85,16 @@ export class QwertyKeyboard {
   handleKeyDown(key: string, repeat = false): boolean {
     if (!this.enabled) return false;
     const k = key.toLowerCase();
-    if (k === "z") { if (!this.drumMode) this.shiftOctave(-1); return true; }
-    if (k === "x") { if (!this.drumMode) this.shiftOctave(1); return true; }
-    if (k === "c") { this.shiftVelocity(-VELOCITY_STEP); return true; }
-    if (k === "v") { this.shiftVelocity(VELOCITY_STEP); return true; }
+    // Octave/velocity modifiers. Ignore OS key auto-repeat so a held key doesn't
+    // walk the octave/velocity to its limit — one step per physical press.
+    if (k === "z" || k === "x" || k === "c" || k === "v") {
+      if (repeat) return true;
+      if (k === "z") { if (!this.drumMode) this.shiftOctave(-1); }
+      else if (k === "x") { if (!this.drumMode) this.shiftOctave(1); }
+      else if (k === "c") { this.shiftVelocity(-VELOCITY_STEP); }
+      else { this.shiftVelocity(VELOCITY_STEP); }
+      return true;
+    }
     if (!(k in QWERTY_SEMITONES)) return false;
     if (repeat || this.sounding.has(k)) return true; // ignore auto-repeat
     const note = this.noteFor(k);

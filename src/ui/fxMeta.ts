@@ -11,6 +11,9 @@ export interface FxParamMeta {
   min: number;
   max: number;
   step: number;
+  /** Display fallback when the param is unset in DEFAULT_EFFECTS (e.g. crushRate
+   *  has no stored default — the engine runs it at the context sample rate). */
+  def?: number;
 }
 
 export interface FxSelectMeta {
@@ -52,7 +55,7 @@ export const FX_META: Record<EffectName, FxMeta> = {
     label: "CRSH", full: "Bitcrusher",
     params: [
       { key: "bits", label: "Bits", min: 2, max: 16, step: 1 },
-      { key: "crushRate", label: "Rate", min: 100, max: 44100, step: 100 },
+      { key: "crushRate", label: "Rate", min: 100, max: 44100, step: 100, def: 44100 },
     ],
   },
   chorus: {

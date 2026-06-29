@@ -18,17 +18,19 @@ Because mpumpit is a derivative work of mpump's AGPL-3.0-only engine, mpumpit
 as a whole is distributed under the same license (AGPL-3.0-only). The engine
 code is NOT relicensed.
 
-The following files are copied verbatim (apart from import-path adjustments and
-an added license header) from mpump's source tree (mpump/server/):
+The following files originate from mpump's source tree (mpump/server/), with
+import-path adjustments, an added license header, and mpumpit-specific
+modifications (readiness/panic helpers, polyphonic CV-gate tracking, and numeric
+input hardening in AudioPort.ts):
 
   src/engine/AudioPort.ts      ← src/engine/AudioPort.ts
   src/engine/drumSynth.ts      ← src/engine/drumSynth.ts
   src/engine/CVOutput.ts       ← src/engine/CVOutput.ts
   src/engine/storage.ts        ← src/utils/storage.ts
   src/engine/soundPresets.ts   ← src/data/soundPresets.ts
-  public/worklets/*.js         ← public/worklets/*.js
-    (poly-synth, moog-filter, diode-filter, bitcrusher,
-     sync-osc, fm-osc, wavetable-osc)
+  public/worklets/poly-synth.js, bitcrusher.js ← public/worklets/*.js
+    (the unused moog-filter / diode-filter / sync-osc / fm-osc / wavetable-osc
+     worklets were dropped; poly-synth.js implements those models inline)
 
 The following file is derived (trimmed to the engine-relevant subset) from
 mpump:

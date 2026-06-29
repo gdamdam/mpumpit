@@ -50,4 +50,21 @@ describe("parseMidiMessage", () => {
   it("accepts Uint8Array (the Web MIDI payload type)", () => {
     expect(parseMidiMessage(Uint8Array.from([0x90, 60, 1]))).toEqual({ kind: "noteOn", channel: 1, note: 60, velocity: 1 });
   });
+
+  it("ignores a buffer that starts with a data byte (not a status byte)", () => {
+    // High bit clear → not a status byte; must not be misparsed as a message type.
+    expect(parseMidiMessage([0x3c, 0x40])).toEqual({ kind: "ignored" });
+    expect(parseMidiMessage([0x00, 0x00])).toEqual({ kind: "ignored" });
+    expect(parseMidiMessage([0x7f])).toEqual({ kind: "ignored" });
+  });
+
+  it("treats high-rate system-common timing (MTC 0xF1, song-position 0xF2) as clock so it can be throttled", () => {
+    expect(parseMidiMessage([0xf1, 0x10])).toEqual({ kind: "clock" });
+    expect(parseMidiMessage([0xf2, 0x00, 0x10])).toEqual({ kind: "clock" });
+  });
+
+  it("masks data bytes to 7 bits (defensive against malformed drivers)", () => {
+    // 0xc4 = 196 → 196 & 0x7f = 68
+    expect(parseMidiMessage([0x90, 0xc4, 100])).toMatchObject({ kind: "noteOn", note: 68 });
+  });
 });

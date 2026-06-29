@@ -33,9 +33,17 @@ export function parseMidiMessage(data: Uint8Array | ReadonlyArray<number>): Midi
 
   const status = data[0];
 
+  // A status byte always has its high bit set. A buffer beginning with a data
+  // byte (a sliced payload or non-compliant driver) is not a decodable message.
+  if ((status & 0x80) === 0) return { kind: "ignored" };
+
   // System real-time (single status byte, no payload) — clock & transport.
   if (status >= 0xf8) return { kind: "clock" };
-  // System common / SysEx — not used by mpumpit.
+  // High-rate system-common timing: MTC quarter-frame (0xF1, up to ~96/s) and
+  // song-position (0xF2). Bucketed with clock so the router throttles the
+  // activity LED instead of blinking on every frame.
+  if (status === 0xf1 || status === 0xf2) return { kind: "clock" };
+  // Other system common / SysEx — not used by mpumpit.
   if (status >= 0xf0) return { kind: "ignored" };
 
   const type = status & 0xf0;
@@ -43,18 +51,18 @@ export function parseMidiMessage(data: Uint8Array | ReadonlyArray<number>): Midi
 
   switch (type) {
     case NOTE_ON: {
-      const note = data[1] ?? 0;
-      const velocity = data[2] ?? 0;
+      const note = (data[1] ?? 0) & 0x7f;
+      const velocity = (data[2] ?? 0) & 0x7f;
       // Note On with velocity 0 is a Note Off (running-status convention).
       if (velocity === 0) return { kind: "noteOff", channel, note };
       return { kind: "noteOn", channel, note, velocity };
     }
     case NOTE_OFF: {
-      const note = data[1] ?? 0;
+      const note = (data[1] ?? 0) & 0x7f;
       return { kind: "noteOff", channel, note };
     }
     case CONTROL_CHANGE: {
-      const controller = data[1] ?? 0;
+      const controller = (data[1] ?? 0) & 0x7f;
       if (controller === CC_ALL_SOUND_OFF || controller === CC_ALL_NOTES_OFF) {
         return { kind: "allNotesOff", channel, controller };
       }

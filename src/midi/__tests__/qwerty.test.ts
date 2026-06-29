@@ -93,4 +93,15 @@ describe("QwertyKeyboard (Ableton layout)", () => {
     expect(kb.handleKeyDown("w")).toBe(true); // consumed, but no voice
     expect(ons).toHaveLength(0);
   });
+
+  it("ignores OS auto-repeat on octave/velocity modifier keys", () => {
+    kb.handleKeyDown("x", false); // octave up → shift 1
+    kb.handleKeyDown("x", true);  // auto-repeat → must be ignored
+    kb.handleKeyDown("x", true);
+    expect(kb.getOctaveShift()).toBe(1); // not 3
+    kb.handleKeyDown("c", false); // velocity -12 → 88
+    kb.handleKeyDown("c", true);  // auto-repeat → ignored
+    kb.handleKeyDown("c", true);
+    expect(kb.getVelocity()).toBe(88); // not 64
+  });
 });

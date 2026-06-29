@@ -5,7 +5,7 @@
 import { useState } from "react";
 import type { SoundModule } from "../../sound/SoundModule";
 import type { FxTarget, FxChainItem } from "../../sound/types";
-import type { EffectName } from "../../engine/types";
+import { type EffectName, DEFAULT_EFFECTS } from "../../engine/types";
 import type { Part } from "../../midi/types";
 import { FX_META, WET_LABEL } from "../fxMeta";
 import { Slider, Select, Toggle } from "./Controls";
@@ -71,6 +71,9 @@ function FxRow(props: {
   const { item, expanded } = props;
   const meta = FX_META[item.id as EffectName];
   const p = item.params as Record<string, unknown>;
+  // Truthful display fallback: the effect's real default, then the meta default,
+  // then the slider minimum — never a hardcoded guess that diverges from the engine.
+  const def = DEFAULT_EFFECTS[item.id as EffectName] as Record<string, unknown> | undefined;
 
   return (
     <div className={`fx-row${item.enabled ? " is-on" : ""}`}>
@@ -101,12 +104,12 @@ function FxRow(props: {
           ))}
           {meta.params.map((pm) => (
             <Slider key={pm.key} label={pm.label} min={pm.min} max={pm.max} step={pm.step}
-              value={Number(p[pm.key] ?? pm.min)} onChange={(v) => props.onParam(pm.key, v)}
+              value={Number(p[pm.key] ?? def?.[pm.key] ?? pm.def ?? pm.min)} onChange={(v) => props.onParam(pm.key, v)}
               format={(v) => fmt(v, pm.step)} />
           ))}
           {meta.wet && (
             <Slider label={WET_LABEL} min={0} max={1} step={0.01}
-              value={Number(p[meta.wet] ?? 0.3)} onChange={(v) => props.onParam(meta.wet!, v)}
+              value={Number(p[meta.wet] ?? def?.[meta.wet] ?? 0.3)} onChange={(v) => props.onParam(meta.wet!, v)}
               format={(v) => `${Math.round(v * 100)}%`} />
           )}
           <ExcludeToggles params={p} onParam={props.onParam} hasDrums={item.id !== "duck"} />

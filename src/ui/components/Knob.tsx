@@ -27,6 +27,8 @@ export function Knob(props: {
         max={max}
         step={step}
         value={value}
+        aria-label={label}
+        aria-valuetext={format ? format(value) : defaultFmt(value)}
         style={{ "--knob-pct": `${pct}%` } as React.CSSProperties}
         onChange={(e) => onChange(parseFloat(e.target.value))}
       />
