@@ -58,6 +58,15 @@ export class FakeAudioEngine implements AudioEngine {
     this.rec("setChannelGate", ch, on, rate, depth, shape);
   }
   setVolume(v: number) { this.rec("setVolume", v); }
+  setMasterEq(low: number, mid: number, high: number) { this.rec("setMasterEq", low, mid, high); }
+  setLowCut(freq: number) { this.rec("setLowCut", freq); }
+  setMultibandEnabled(on: boolean) { this.rec("setMultibandEnabled", on); }
+  setMultibandAmount(amount: number) { this.rec("setMultibandAmount", amount); }
+  setAntiClipMode(mode: "off" | "limiter" | "hybrid") { this.rec("setAntiClipMode", mode); }
+  setDrive(db: number) { this.rec("setDrive", db); }
+  setMasterBoost(gain: number) { this.rec("setMasterBoost", gain); }
+  setWidth(width: number) { this.rec("setWidth", width); }
+  setMbExclude(channel: "drums", exclude: boolean) { this.rec("setMbExclude", channel, exclude); }
   stopAllDrums() { this.rec("stopAllDrums"); }
   flushFxTails() { this.rec("flushFxTails"); }
   isPolySynthReady(): boolean { return this.polyReady; }

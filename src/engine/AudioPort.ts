@@ -168,7 +168,10 @@ export class AudioPort {
   private sourceFxTarget: Map<SourceKey, GainNode> = new Map();
   /** MB (multiband) bypass: excluded channels skip FX+EQ+MB, connect to driveGain. */
   private mbDrumsDirectOut: GainNode | null = null;
-  private mbExcludeDrums = true;
+  // Drums route through the full master FX chain by default (like synth/bass), so
+  // the per-effect "EXCL. DRUMS" toggle works. Set via setMbExclude("drums", true)
+  // to bypass FX+EQ+MB and send drums straight to driveGain.
+  private mbExcludeDrums = false;
   /** Stereo width gain (Haas effect level on high band). */
   private widthGain: GainNode | null = null;
   private widthDelay: DelayNode | null = null;
@@ -1872,6 +1875,21 @@ export class AudioPort {
   /** Set master output boost (linear gain, e.g. 1.0 = unity, 2.0 = +6dB). */
   setMasterBoost(gain: number): void {
     this.masterBoost.gain.value = safeClamp(gain, 0.5, 3, 1);
+  }
+
+  getMasterBoost(): number {
+    return this.masterBoost.gain.value;
+  }
+
+  /** Set the master output EQ band gains in dB (low shelf / mid peak / high shelf). */
+  setMasterEq(low: number, mid: number, high: number): void {
+    this.eqLow.gain.value = safeClamp(low, -12, 12, 0);
+    this.eqMid.gain.value = safeClamp(mid, -12, 12, 0);
+    this.eqHigh.gain.value = safeClamp(high, -12, 12, 0);
+  }
+
+  getMasterEq(): { low: number; mid: number; high: number } {
+    return { low: this.eqLow.gain.value, mid: this.eqMid.gain.value, high: this.eqHigh.gain.value };
   }
 
   /** Set stereo width (0 = mono-compatible, 1 = full width). Controls Haas effect level. */

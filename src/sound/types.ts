@@ -61,12 +61,40 @@ export interface UserPresets {
   drums: DrumKitPreset[];
 }
 
+/** Master output (mastering) stage: post-FX EQ, multiband, limiter, gain/width.
+ *  Every field maps to an AudioPort setter and is applied via applyMaster(). */
+export interface MasterSettings {
+  eq: { low: number; mid: number; high: number }; // dB, -12..+12 (low shelf / mid peak / high shelf)
+  lowCut: number;            // master high-pass freq in Hz, 0..500 (≤20 = off)
+  multibandOn: boolean;
+  multibandAmount: number;   // 0..1 (0 = gentle, 1 = heavy)
+  limiterMode: "off" | "limiter" | "hybrid";
+  drive: number;             // input gain before limiter, dB (-6..+12)
+  boost: number;             // master output boost, linear gain 0.5..3
+  width: number;             // stereo width 0..1
+  drumsThroughFx: boolean;   // route drums through the master FX chain (inverse of engine mbExcludeDrums)
+}
+
+/** Engine defaults — the values AudioPort initializes to. Used for reset + fallback. */
+export const DEFAULT_MASTER: MasterSettings = {
+  eq: { low: 2, mid: -2, high: 1 },
+  lowCut: 0,
+  multibandOn: false,
+  multibandAmount: 0.25,
+  limiterMode: "limiter",
+  drive: 1,
+  boost: 2.0,
+  width: 0.5,
+  drumsThroughFx: true,
+};
+
 /** Full serializable state owned by the SoundModule. */
 export interface SoundState {
   masterVolume: number; // 0..1
   bpm: number;
   effects: EffectParams; // mpump's effect params (on / params / per-part exclude)
   effectOrder: EffectName[];
+  master: MasterSettings; // master output stage (EQ / multiband / limiter / drive / width)
   drumMap: Record<number, number>; // incoming-note → mpump-note overrides
   parts: Record<Part, PartState>;
   userPresets: UserPresets;

@@ -8,8 +8,8 @@
 import type { EffectName, EffectParams, SynthParams, DrumVoiceParams } from "../engine/types";
 import { DEFAULT_EFFECTS } from "../engine/types";
 import {
-  MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP,
-  type SoundState, type PartState, type ChannelStrip, type UserPresets,
+  MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP, DEFAULT_MASTER,
+  type SoundState, type PartState, type ChannelStrip, type UserPresets, type MasterSettings,
 } from "./types";
 import type { Part } from "../midi/types";
 import type { SynthPreset, DrumKitPreset } from "../engine/soundPresets";
@@ -118,6 +118,30 @@ function normalizeDrumMap(raw: unknown): Record<number, number> {
   return out;
 }
 
+/** Master output stage: each field clamped to its engine range; limiter mode
+ *  validated against the allowed enum. Missing/garbage fields keep the default. */
+function normalizeMaster(raw: unknown): MasterSettings {
+  const d = DEFAULT_MASTER;
+  if (!isObj(raw)) return structuredClone(d);
+  const eq = isObj(raw.eq) ? raw.eq : {};
+  const mode = raw.limiterMode;
+  return {
+    eq: {
+      low: numOr(eq.low, d.eq.low, -12, 12),
+      mid: numOr(eq.mid, d.eq.mid, -12, 12),
+      high: numOr(eq.high, d.eq.high, -12, 12),
+    },
+    lowCut: numOr(raw.lowCut, d.lowCut, 0, 500),
+    multibandOn: typeof raw.multibandOn === "boolean" ? raw.multibandOn : d.multibandOn,
+    multibandAmount: numOr(raw.multibandAmount, d.multibandAmount, 0, 1),
+    limiterMode: mode === "off" || mode === "limiter" || mode === "hybrid" ? mode : d.limiterMode,
+    drive: numOr(raw.drive, d.drive, -6, 12),
+    boost: numOr(raw.boost, d.boost, 0.5, 3),
+    width: numOr(raw.width, d.width, 0, 1),
+    drumsThroughFx: typeof raw.drumsThroughFx === "boolean" ? raw.drumsThroughFx : d.drumsThroughFx,
+  };
+}
+
 function normalizeUserPresets(raw: unknown): UserPresets {
   const pick = (v: unknown) =>
     Array.isArray(v) ? v.filter((p) => isObj(p) && typeof (p as { name?: unknown }).name === "string") : [];
@@ -141,6 +165,7 @@ export function normalizeSoundState(raw: unknown): Partial<SoundState> {
   if (typeof raw.bpm === "number" && Number.isFinite(raw.bpm)) out.bpm = Math.max(20, Math.min(300, raw.bpm));
   if ("effects" in raw) out.effects = normalizeEffects(raw.effects);
   if ("effectOrder" in raw) out.effectOrder = normalizeEffectOrder(raw.effectOrder);
+  if ("master" in raw) out.master = normalizeMaster(raw.master);
   if ("drumMap" in raw) out.drumMap = normalizeDrumMap(raw.drumMap);
   if (isObj(raw.parts)) {
     const parts: Record<string, Partial<PartState>> = {};

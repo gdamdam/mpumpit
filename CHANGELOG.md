@@ -3,6 +3,24 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-06-29
+
+### Fixed
+- **Master effects now reach drums.** Drums were hardcoded to bypass the entire
+  master FX chain (and EQ + multiband), so delay/reverb/distortion/etc. never
+  applied to them and the per-effect *EXCL. DRUMS* toggle was a silent no-op.
+  Drums now route through the master FX chain by default, exactly like synth and
+  bass (matching the documented design), and *EXCL. DRUMS* works per effect.
+
+### Added
+- **Master output (mastering) section** in the FX panel's master view, exposing
+  engine controls that were previously unreachable from the UI: 3-band master EQ
+  + low-cut, multiband compressor (on + amount), limiter mode (off/limiter/
+  hybrid), drive, output boost, stereo width, and a **Drums → FX** toggle. All
+  settings persist across reload (added to `SoundState` with field-by-field
+  normalization) and a **Reset** button restores engine defaults. Older saves
+  without a `master` block fall back to defaults — backward compatible.
+
 ## [1.1.1] — 2026-06-29
 
 ### Fixed

@@ -55,10 +55,12 @@ function MasterFx({ sm, onChange }: { sm: SoundModule; target: FxTarget; onChang
       <button type="button" className="fx-reset-all" onClick={() => { sm.resetAllEffects(); onChange(); }}>
         Reset all FX
       </button>
+      <MasterOutput sm={sm} onChange={onChange} />
       {editItem && (
         <EffectEditor
           name={editItem.id as EffectName}
           params={editItem.params as EffectParams[EffectName]}
+          drumsInFx={sm.getMaster().drumsThroughFx}
           onUpdate={(patch) => {
             for (const [k, v] of Object.entries(patch)) sm.setEffectParameter("master", editItem.id, k, v);
             onChange();
@@ -67,6 +69,54 @@ function MasterFx({ sm, onChange }: { sm: SoundModule; target: FxTarget; onChang
           onClose={() => setEditing(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ── Master output (mastering) stage ──────────────────────────────────────────
+// Post-FX EQ, multiband comp, limiter, drive/boost/width, and drum FX routing.
+// Each control pushes through SoundModule (state + engine); Reset restores
+// engine defaults (DEFAULT_MASTER). Signal flow: FX chain → EQ → MB → limiter.
+
+const LIMITER_MODES = ["off", "limiter", "hybrid"];
+
+function MasterOutput({ sm, onChange }: { sm: SoundModule; onChange: () => void }) {
+  const m = sm.getMaster();
+  const after = <T,>(fn: (v: T) => void) => (v: T) => { fn(v); onChange(); };
+
+  return (
+    <div className="strip-group master-output">
+      <div className="strip-group-head"><span>Master output</span>
+        <button type="button" className="fx-reset" onClick={() => { sm.resetMaster(); onChange(); }}>Reset</button>
+      </div>
+
+      <Toggle label="Drums → FX" on={m.drumsThroughFx} onChange={after((on: boolean) => sm.setDrumsThroughFx(on))}
+        title="Route drums through the master FX chain (like synth/bass). Off bypasses FX+EQ+multiband." />
+
+      <Slider label="EQ Low" min={-12} max={12} step={0.5} value={m.eq.low} format={dB}
+        onChange={after((v) => sm.setMasterEq(v, m.eq.mid, m.eq.high))} />
+      <Slider label="EQ Mid" min={-12} max={12} step={0.5} value={m.eq.mid} format={dB}
+        onChange={after((v) => sm.setMasterEq(m.eq.low, v, m.eq.high))} />
+      <Slider label="EQ High" min={-12} max={12} step={0.5} value={m.eq.high} format={dB}
+        onChange={after((v) => sm.setMasterEq(m.eq.low, m.eq.mid, v))} />
+      <Slider label="Low cut" min={0} max={500} step={5} value={m.lowCut}
+        format={(v) => (v <= 20 ? "off" : `${Math.round(v)}Hz`)}
+        onChange={after((v) => sm.setMasterLowCut(v))} />
+
+      <div className="strip-group-head"><Toggle label="Multiband" on={m.multibandOn}
+        onChange={after((on: boolean) => sm.setMultibandEnabled(on))} /></div>
+      <Slider label="Amount" min={0} max={1} step={0.01} value={m.multibandAmount}
+        format={(v) => `${Math.round(v * 100)}%`} onChange={after((v) => sm.setMultibandAmount(v))} />
+
+      <Select label="Limiter" value={m.limiterMode} options={LIMITER_MODES}
+        onChange={after((v: string) => sm.setLimiterMode(v as "off" | "limiter" | "hybrid"))} />
+
+      <Slider label="Drive" min={-6} max={12} step={0.5} value={m.drive} format={dB}
+        onChange={after((v) => sm.setMasterDrive(v))} />
+      <Slider label="Boost" min={0.5} max={3} step={0.1} value={m.boost}
+        format={(v) => `${v.toFixed(1)}×`} onChange={after((v) => sm.setMasterBoost(v))} />
+      <Slider label="Width" min={0} max={1} step={0.05} value={m.width}
+        format={(v) => `${Math.round(v * 100)}%`} onChange={after((v) => sm.setMasterWidth(v))} />
     </div>
   );
 }

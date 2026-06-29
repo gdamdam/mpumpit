@@ -563,3 +563,95 @@ describe("SoundModule — malformed persisted state (issue 3)", () => {
     ).not.toThrow();
   });
 });
+
+describe("SoundModule — master output stage", () => {
+  const lastArgs = (engine: FakeAudioEngine, method: string) => engine.callsTo(method).at(-1)?.args;
+
+  it("pushes the full master stage to the engine on initialize (drums routed through FX by default)", async () => {
+    const { engine, sm } = make();
+    await sm.initialize();
+    expect(lastArgs(engine, "setMasterEq")).toEqual([2, -2, 1]);
+    expect(lastArgs(engine, "setLowCut")).toEqual([0]);
+    expect(lastArgs(engine, "setMultibandEnabled")).toEqual([false]);
+    expect(lastArgs(engine, "setMultibandAmount")).toEqual([0.25]);
+    expect(lastArgs(engine, "setAntiClipMode")).toEqual(["limiter"]);
+    expect(lastArgs(engine, "setDrive")).toEqual([1]);
+    expect(lastArgs(engine, "setMasterBoost")).toEqual([2]);
+    expect(lastArgs(engine, "setWidth")).toEqual([0.5]);
+    // drumsThroughFx true ⇒ NOT MB-excluded ⇒ drums run through the FX chain.
+    expect(lastArgs(engine, "setMbExclude")).toEqual(["drums", false]);
+  });
+
+  it("granular setters update state and push only the affected engine node", async () => {
+    const { engine, sm } = make();
+    await sm.initialize();
+    sm.setMasterEq(3, -1, 4);
+    sm.setMasterDrive(-2);
+    sm.setLimiterMode("hybrid");
+    sm.setMultibandEnabled(true);
+    expect(sm.getMaster().eq).toEqual({ low: 3, mid: -1, high: 4 });
+    expect(sm.getMaster().drive).toBe(-2);
+    expect(sm.getMaster().limiterMode).toBe("hybrid");
+    expect(lastArgs(engine, "setMasterEq")).toEqual([3, -1, 4]);
+    expect(lastArgs(engine, "setDrive")).toEqual([-2]);
+    expect(lastArgs(engine, "setAntiClipMode")).toEqual(["hybrid"]);
+  });
+
+  it("clamps out-of-range values into engine bounds", () => {
+    const { sm } = make();
+    sm.setMasterEq(99, -99, 0);
+    sm.setMasterDrive(100);
+    sm.setMasterBoost(0);
+    expect(sm.getMaster().eq).toEqual({ low: 12, mid: -12, high: 0 });
+    expect(sm.getMaster().drive).toBe(12);
+    expect(sm.getMaster().boost).toBe(0.5);
+  });
+
+  it("Drums → FX toggle maps to the inverse MB-exclude flag", async () => {
+    const { engine, sm } = make();
+    await sm.initialize();
+    sm.setDrumsThroughFx(false);
+    expect(sm.getMaster().drumsThroughFx).toBe(false);
+    expect(lastArgs(engine, "setMbExclude")).toEqual(["drums", true]);
+  });
+
+  it("resetMaster restores defaults and re-applies them to the engine", async () => {
+    const { engine, sm } = make();
+    await sm.initialize();
+    sm.setMasterDrive(-5);
+    sm.setMultibandEnabled(true);
+    sm.resetMaster();
+    expect(sm.getMaster().drive).toBe(1);
+    expect(sm.getMaster().multibandOn).toBe(false);
+    expect(lastArgs(engine, "setDrive")).toEqual([1]);
+    expect(lastArgs(engine, "setMultibandEnabled")).toEqual([false]);
+  });
+
+  it("normalizes a malformed persisted master to defaults without throwing", () => {
+    const sm = new SoundModule({
+      createEngine: () => new FakeAudioEngine(),
+      initialState: { master: { eq: 5, lowCut: "x", multibandOn: 1, limiterMode: "boom", drive: NaN, boost: 99 } } as never,
+    });
+    const m = sm.getMaster();
+    expect(m.eq).toEqual({ low: 2, mid: -2, high: 1 }); // bad eq → defaults
+    expect(m.limiterMode).toBe("limiter"); // unknown enum → default
+    expect(m.drive).toBe(1); // NaN → default
+    expect(m.boost).toBe(3); // 99 clamped to max
+  });
+
+  it("round-trips master settings through getState into a fresh module", async () => {
+    const { sm } = make();
+    sm.setMasterEq(5, 5, 5);
+    sm.setMultibandAmount(0.8);
+    sm.setDrumsThroughFx(false);
+    const state = sm.getState();
+    expect(state.master.eq).toEqual({ low: 5, mid: 5, high: 5 });
+
+    const engine2 = new FakeAudioEngine();
+    const sm2 = new SoundModule({ createEngine: () => engine2, initialState: state });
+    await sm2.initialize();
+    expect(sm2.getMaster().eq).toEqual({ low: 5, mid: 5, high: 5 });
+    expect(sm2.getMaster().multibandAmount).toBe(0.8);
+    expect(engine2.callsTo("setMbExclude").at(-1)?.args).toEqual(["drums", true]);
+  });
+});

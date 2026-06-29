@@ -18,8 +18,9 @@ import { AudioPort } from "../engine/AudioPort";
 import { DRUM_PAN } from "../engine/drumSynth";
 import { PART_TO_AUDIO_CH, type Part } from "../midi/types";
 import {
-  MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP,
+  MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP, DEFAULT_MASTER,
   type FxTarget, type FxChain, type FxChainItem, type SoundState, type PartState, type ChannelStrip, type UserPresets,
+  type MasterSettings,
 } from "./types";
 import { normalizeSoundState } from "./normalizeState";
 
@@ -43,6 +44,16 @@ export interface AudioEngine {
   setChannelPan(ch: number, pan: number): void;
   setChannelGate(ch: number, on: boolean, rate: string, depth: number, shape: string): void;
   setVolume(v: number): void;
+  // Master output stage (mastering): EQ / low-cut / multiband / limiter / drive / boost / width / drum routing.
+  setMasterEq(low: number, mid: number, high: number): void;
+  setLowCut(freq: number): void;
+  setMultibandEnabled(on: boolean): void;
+  setMultibandAmount(amount: number): void;
+  setAntiClipMode(mode: "off" | "limiter" | "hybrid"): void;
+  setDrive(db: number): void;
+  setMasterBoost(gain: number): void;
+  setWidth(width: number): void;
+  setMbExclude(channel: "drums", exclude: boolean): void;
   stopAllDrums(): void;
   flushFxTails(): void;
   isPolySynthReady(): boolean;
@@ -93,6 +104,7 @@ export function defaultSoundState(): SoundState {
     bpm: 120,
     effects: structuredClone(DEFAULT_EFFECTS),
     effectOrder: [...DEFAULT_EFFECT_ORDER],
+    master: structuredClone(DEFAULT_MASTER),
     drumMap: {},
     parts: {
       synth: defaultPartState("Default"),
@@ -595,6 +607,82 @@ export class SoundModule {
     this.emit();
   }
 
+  // ── Master output stage ────────────────────────────────────────────────────
+  // Granular setters: update state + push the single affected engine node. The
+  // engine clamps too, but state holds the sane value so it round-trips through
+  // persistence. UI reads via getMaster(); resetMaster() restores DEFAULT_MASTER.
+
+  getMaster(): MasterSettings {
+    const m = this.state.master;
+    return { ...m, eq: { ...m.eq } };
+  }
+
+  setMasterEq(low: number, mid: number, high: number): void {
+    const c = (v: number) => clampNum(v, -12, 12);
+    this.state.master.eq = { low: c(low), mid: c(mid), high: c(high) };
+    this.engine?.setMasterEq(this.state.master.eq.low, this.state.master.eq.mid, this.state.master.eq.high);
+    this.emit();
+  }
+
+  setMasterLowCut(freq: number): void {
+    const f = clampNum(freq, 0, 500);
+    this.state.master.lowCut = f;
+    this.engine?.setLowCut(f);
+    this.emit();
+  }
+
+  setMultibandEnabled(on: boolean): void {
+    this.state.master.multibandOn = on;
+    this.engine?.setMultibandEnabled(on);
+    this.emit();
+  }
+
+  setMultibandAmount(amount: number): void {
+    const a = clamp01(amount);
+    this.state.master.multibandAmount = a;
+    this.engine?.setMultibandAmount(a);
+    this.emit();
+  }
+
+  setLimiterMode(mode: "off" | "limiter" | "hybrid"): void {
+    this.state.master.limiterMode = mode;
+    this.engine?.setAntiClipMode(mode);
+    this.emit();
+  }
+
+  setMasterDrive(db: number): void {
+    const v = clampNum(db, -6, 12);
+    this.state.master.drive = v;
+    this.engine?.setDrive(v);
+    this.emit();
+  }
+
+  setMasterBoost(gain: number): void {
+    const g = clampNum(gain, 0.5, 3);
+    this.state.master.boost = g;
+    this.engine?.setMasterBoost(g);
+    this.emit();
+  }
+
+  setMasterWidth(width: number): void {
+    const w = clamp01(width);
+    this.state.master.width = w;
+    this.engine?.setWidth(w);
+    this.emit();
+  }
+
+  setDrumsThroughFx(on: boolean): void {
+    this.state.master.drumsThroughFx = on;
+    this.engine?.setMbExclude("drums", !on);
+    this.emit();
+  }
+
+  resetMaster(): void {
+    this.state.master = structuredClone(DEFAULT_MASTER);
+    this.applyMaster();
+    this.emit();
+  }
+
   getBpm(): number {
     return this.state.bpm;
   }
@@ -828,6 +916,7 @@ export class SoundModule {
     if (!this.engine) return;
     this.engine.setBpm(this.state.bpm);
     this.engine.setVolume(this.state.masterVolume);
+    this.applyMaster();
     this.applyFx();
     for (const part of ["synth", "bass", "drums"] as Part[]) {
       this.applyPart(part);
@@ -840,6 +929,22 @@ export class SoundModule {
     if (!this.engine) return;
     this.engine.setEffectOrder([...this.state.effectOrder]);
     for (const name of MASTER_EFFECTS) this.applyMasterEffect(name);
+  }
+
+  // Push the full master output stage to the engine (load / reset). Granular
+  // setters below touch only one node each to avoid needless chain rebuilds.
+  private applyMaster(): void {
+    if (!this.engine) return;
+    const m = this.state.master;
+    this.engine.setMasterEq(m.eq.low, m.eq.mid, m.eq.high);
+    this.engine.setLowCut(m.lowCut);
+    this.engine.setMultibandEnabled(m.multibandOn);
+    this.engine.setMultibandAmount(m.multibandAmount);
+    this.engine.setAntiClipMode(m.limiterMode);
+    this.engine.setDrive(m.drive);
+    this.engine.setMasterBoost(m.boost);
+    this.engine.setWidth(m.width);
+    this.engine.setMbExclude("drums", !m.drumsThroughFx);
   }
 
   // Push one master effect to the engine. `duck` is a real sidechain (not an
@@ -886,6 +991,11 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
+/** Finite number clamped to [lo, hi]; non-finite input falls back to lo. */
+function clampNum(v: number, lo: number, hi: number): number {
+  return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : lo;
+}
+
 /** Deep-merge a partial SoundState onto a base, preserving nested defaults. */
 function mergeState(base: SoundState, patch: Partial<SoundState>): SoundState {
   const out: SoundState = {
@@ -893,6 +1003,9 @@ function mergeState(base: SoundState, patch: Partial<SoundState>): SoundState {
     bpm: patch.bpm ?? base.bpm,
     effects: { ...base.effects, ...(patch.effects ?? {}) } as EffectParams,
     effectOrder: patch.effectOrder ? [...patch.effectOrder] : [...base.effectOrder],
+    master: patch.master
+      ? { ...base.master, ...patch.master, eq: { ...base.master.eq, ...(patch.master.eq ?? {}) } }
+      : { ...base.master, eq: { ...base.master.eq } },
     drumMap: { ...(patch.drumMap ?? base.drumMap) },
     parts: {
       synth: mergePart(base.parts.synth, patch.parts?.synth),
