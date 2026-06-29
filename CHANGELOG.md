@@ -3,6 +3,20 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-06-28
+
+### Fixed
+- **No sound / no MIDI received** even with a connected, selected input: the
+  `midimessage` listener was attached with `addEventListener` but the port was
+  never opened. Per the Web MIDI spec a port opens implicitly only when
+  `onmidimessage` is set, so some browsers (and virtual ports like the macOS IAC
+  bus) delivered nothing. Each selected input is now explicitly `open()`ed.
+
+### Added
+- The **MIDI-IN indicator now blinks on any inbound message**, even on an
+  unrouted channel — so "device sending but silent" (channel mismatch) is
+  distinguishable from "nothing arriving" (connection problem).
+
 ## [0.3.0] — 2026-06-28
 
 ### Added

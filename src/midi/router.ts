@@ -46,6 +46,8 @@ export interface MidiRouterOptions {
   onStateChange?: () => void;
   /** Fired when a note is routed to a part (for activity indicators). */
   onActivity?: (part: Part) => void;
+  /** Fired on ANY inbound channel-voice message, routed or not (MIDI-IN LED). */
+  onRawActivity?: () => void;
 }
 
 export class MidiRouter {
@@ -55,6 +57,7 @@ export class MidiRouter {
   private selectedInputId: string;
   private readonly onStateChange?: () => void;
   private readonly onActivity?: (part: Part) => void;
+  private readonly onRawActivity?: () => void;
 
   private access: MIDIAccess | null = null;
   private permission: MidiPermissionState = "idle";
@@ -72,6 +75,7 @@ export class MidiRouter {
     this.selectedInputId = opts.selectedInputId ?? ALL_INPUTS;
     this.onStateChange = opts.onStateChange;
     this.onActivity = opts.onActivity;
+    this.onRawActivity = opts.onRawActivity;
   }
 
   // ── Access / enumeration ───────────────────────────────────────────────────
@@ -164,6 +168,10 @@ export class MidiRouter {
       if (this.selectedInputId !== ALL_INPUTS && input.id !== this.selectedInputId) return;
       const handler = (e: MIDIMessageEvent) => this.handleMessage(input.id, e.data);
       input.addEventListener("midimessage", handler as EventListener);
+      // Some browsers don't implicitly open a port when you only addEventListener
+      // (the spec opens it on setting `onmidimessage`), so messages never arrive.
+      // Open it explicitly. `.open()` returns a promise; ignore failures.
+      try { void (input as unknown as { open?: () => Promise<unknown> }).open?.(); } catch { /* */ }
       this.handlers.set(input.id, handler);
     });
   }
@@ -198,6 +206,10 @@ export class MidiRouter {
   handleMessage(inputId: string, data: Uint8Array | ReadonlyArray<number> | null | undefined): void {
     if (!data) return;
     const ev = parseMidiMessage(data);
+    // Blink the MIDI-IN indicator for any real message, even on an unrouted
+    // channel — so "device sending but silent" is visible (channel mismatch)
+    // vs "nothing arriving" (connection problem).
+    if (ev.kind === "noteOn" || ev.kind === "noteOff" || ev.kind === "allNotesOff") this.onRawActivity?.();
     switch (ev.kind) {
       case "noteOn":
         this.routeNoteOn(inputId, ev.channel, ev.note, ev.velocity);

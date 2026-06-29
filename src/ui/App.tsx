@@ -59,15 +59,18 @@ export function App({ createEngine }: AppProps = {}) {
         saveSettings({ soundState: sm.getState(), channels: r.getChannels(), selectedInputId: r.getSelectedInputId() });
       }, 300);
     };
+    let midiTimer: ReturnType<typeof setTimeout> | undefined;
+    const flashMidiIn = () => {
+      setMidiBlink(true);
+      if (midiTimer) clearTimeout(midiTimer);
+      midiTimer = setTimeout(() => setMidiBlink(false), 160);
+    };
     const flash = (part: Part) => {
       setActivity((a) => (a[part] ? a : { ...a, [part]: true }));
-      setMidiBlink(true);
+      flashMidiIn();
       const t = flashTimers.current[part];
       if (t) clearTimeout(t);
-      flashTimers.current[part] = setTimeout(() => {
-        setActivity((a) => ({ ...a, [part]: false }));
-        setMidiBlink(false);
-      }, 140);
+      flashTimers.current[part] = setTimeout(() => setActivity((a) => ({ ...a, [part]: false })), 140);
     };
     flashRef.current = flash; // so direct-routed keyboard notes blink too
     const router = new MidiRouter({
@@ -82,6 +85,7 @@ export function App({ createEngine }: AppProps = {}) {
         schedulePersist();
       },
       onActivity: flash,
+      onRawActivity: flashMidiIn,
     });
     smRef.current = sm;
     routerRef.current = router;

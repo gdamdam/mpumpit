@@ -45,6 +45,13 @@ describe("MidiRouter — channel routing", () => {
     router.handleMessage("in", noteOn(1, 60, 42));
     expect(sink.ons[0][2]).toBe(42);
   });
+
+  it("signals raw MIDI activity even on an unrouted channel", () => {
+    let raw = 0;
+    const r = new MidiRouter({ sink: new RecordingSink(), onRawActivity: () => raw++ });
+    r.handleMessage("in", noteOn(7, 60)); // channel 7 maps to no part
+    expect(raw).toBe(1); // MIDI-IN still blinks → device is sending
+  });
 });
 
 describe("MidiRouter — note lifecycle & ownership", () => {
