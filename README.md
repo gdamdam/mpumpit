@@ -1,19 +1,41 @@
-# mpumpit
+<div align="center">
 
-A tiny browser-based **MIDI sound module** — a companion for
-[midip](../midip). It exposes [mpump](../mpump)'s Web Audio synth/bass/drum
-engine and its full effects chain as a playable instrument that responds to
-incoming MIDI.
+```
+█▀▄▀█ █▀█ █ █ █▀▄▀█ █▀█ ▀█▀ ▀█▀
+█ ▀ █ █▀▀ ▀▄▀ █ ▀ █ █▀▀ ▄█▄  █
+```
+
+### a browser MIDI sound module
+
+**Plug a sequencer in. Get sound out.**
+
+[![live demo](https://img.shields.io/badge/▶_live_demo-gdamdam.github.io%2Fmpumpit-e0a23c?style=for-the-badge)](https://gdamdam.github.io/mpumpit/)
+
+[![CI](https://github.com/gdamdam/mpumpit/actions/workflows/ci.yml/badge.svg)](https://github.com/gdamdam/mpumpit/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-AGPL--3.0--only-4c8bf5)](./LICENSE)
+[![version](https://img.shields.io/badge/version-0.5.0-e0a23c)](./CHANGELOG.md)
+[![tests](https://img.shields.io/badge/tests-102_passing-5ec27a)](#manual-verification)
+![stack](https://img.shields.io/badge/React_·_TypeScript_·_Vite-1c1d21)
+![api](https://img.shields.io/badge/Web_MIDI_·_Web_Audio-1c1d21)
+
+</div>
+
+---
+
+A tiny browser-based **MIDI sound module** — the companion for
+[midip](https://github.com/gdamdam/midip). It exposes
+[mpump](https://github.com/gdamdam/mpump)'s Web Audio synth/bass/drum engine and
+its full effects chain as a playable instrument that responds to incoming MIDI.
 
 It is **not** a sequencer and not a clone of mpump. midip (or any sequencer,
 DAW, or controller) sends MIDI; mpumpit makes the sound.
 
 ```
 MIDI IN  ◉  [ input ▾ ]                    BPM 120   ?
-SYNTH    ●  CH 1   [ preset ▾ ]   vol 80   FX
-BASS     ●  CH 2   [ preset ▾ ]   vol 80   FX
-DRUMS    ●  CH 10  [ kit ▾ ]      vol 80   FX
-MASTER              vol 85        FX      [ PANIC ]
+SYNTH    ●  CH 1   [ preset ▾ ] [Edit]  vol 80   FX
+BASS     ●  CH 2   [ preset ▾ ] [Edit]  vol 80   FX
+DRUMS    ●  CH 10  [ kit ▾ ]    [Edit]  vol 80   FX
+MASTER              vol 85          FX  [ PANIC ]
 ```
 
 ## What it does
@@ -51,6 +73,15 @@ npm run preview    # serve the production build
 npm test           # run the test suite (Vitest)
 npm run typecheck  # type-check only
 ```
+
+## Deploy (GitHub Pages)
+
+A workflow (`.github/workflows/deploy.yml`) builds and publishes `dist/` to
+GitHub Pages on every push to `main`. One-time setup: in the repo, **Settings →
+Pages → Source: GitHub Actions**. It then serves at
+`https://<owner>.github.io/mpumpit/` (the app uses a relative base, so the
+subpath and its AudioWorklets resolve correctly). Note: Web MIDI needs HTTPS —
+GitHub Pages is HTTPS, so it works.
 
 ## Connecting midip (or any same-computer app)
 
