@@ -123,6 +123,15 @@ function kitVoices(kit: DrumKitPreset): Record<number, DrumVoiceParams> {
   return out;
 }
 
+/** Preset names sorted alphabetically, with the base "Default" preset pinned first. */
+function sortPresetNames(names: string[]): string[] {
+  return [...names].sort((a, b) => {
+    if (a === "Default") return -1;
+    if (b === "Default") return 1;
+    return a.localeCompare(b);
+  });
+}
+
 export class SoundModule {
   private engine: AudioEngine | null = null;
   private readonly createEngine: EngineFactory;
@@ -378,15 +387,16 @@ export class SoundModule {
     return this.drumKitList().find((k) => k.name === name);
   }
 
-  /** Built-in preset names followed by the user's saved presets, for this part. */
+  /** Built-in preset names followed by the user's saved presets, each segment
+   *  sorted alphabetically (Default pinned first). */
   getPresetNames(part: Part): string[] {
     const builtinNames = part === "drums"
       ? DRUM_KIT_PRESETS.map((p) => p.name)
       : (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS).map((p) => p.name);
-    return [...builtinNames, ...this.state.userPresets[part].map((p) => p.name)];
+    return [...sortPresetNames(builtinNames), ...this.getUserPresetNames(part)];
   }
   getUserPresetNames(part: Part): string[] {
-    return this.state.userPresets[part].map((p) => p.name);
+    return sortPresetNames(this.state.userPresets[part].map((p) => p.name));
   }
   isUserPreset(part: Part, name: string): boolean {
     return this.state.userPresets[part].some((p) => p.name === name);

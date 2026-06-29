@@ -93,6 +93,29 @@ describe("SoundModule — presets, volumes, tempo", () => {
     expect(engine.callsTo("setDrumVoice").length).toBeGreaterThan(before);
   });
 
+  it("includes all 8 classic-machine drum kits (imported from mpump)", () => {
+    const names = sm.getPresetNames("drums");
+    for (const m of ["CR-78", "DMX", "Drumulator", "LinnDrum", "TR-606", "TR-707", "TR-808", "TR-909"]) {
+      expect(names).toContain(m);
+    }
+  });
+
+  it("loads an imported machine kit by name", () => {
+    const before = engine.callsTo("setDrumVoice").length;
+    sm.setPreset("drums", "TR-808");
+    expect(engine.callsTo("setDrumVoice").length).toBeGreaterThan(before);
+    expect(sm.getState().parts.drums.preset).toBe("TR-808");
+  });
+
+  it("lists presets alphabetically with Default pinned first", () => {
+    for (const part of ["synth", "bass", "drums"] as const) {
+      const names = sm.getPresetNames(part);
+      expect(names[0]).toBe("Default");
+      const rest = names.slice(1);
+      expect(rest).toEqual([...rest].sort((a, b) => a.localeCompare(b)));
+    }
+  });
+
   it("sets per-part and master volume", () => {
     sm.setPartVolume("drums", 0.5);
     expect(engine.callsTo("setChannelVolume").at(-1)).toEqual({ method: "setChannelVolume", args: [9, 0.5] });

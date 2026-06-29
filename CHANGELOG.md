@@ -3,6 +3,18 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] — 2026-06-29
+
+### Added
+- **8 classic drum machines**, imported from mpump's sample packs: CR-78, DMX,
+  Drumulator, LinnDrum, TR-606, TR-707, TR-808, and TR-909. They join the
+  existing kits in the drum preset list (mpumpit has no separate "Machines"
+  group, so they appear inline).
+
+### Changed
+- Instrument preset lists (synth, bass, drums) are now sorted alphabetically,
+  with **Default** pinned first.
+
 ## [1.0.1] — 2026-06-29
 
 Robustness pass from a full code review — correctness and hardening, no API or
