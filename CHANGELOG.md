@@ -3,11 +3,18 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.4] — 2026-06-29
+
+### Changed
+- The **mpumpit** wordmark is now rendered as half-block pixel art in mpump's
+  actual logo style (same glyphs as mpump's "MPUMP" logo, extended with I/T),
+  replacing the Chakra Petch attempt. Reverted the bundled font.
+
 ## [0.4.3] — 2026-06-29
 
 ### Changed
-- The **mpumpit** wordmark now uses mpump's brand typeface, **Chakra Petch**
-  (SIL OFL, bundled in public/fonts/), so it reads as part of the mpump family.
+- The **mpumpit** wordmark briefly used Chakra Petch (reverted in 0.4.4 — the
+  mpump logo is pixel block-art, not Chakra Petch).
 
 ## [0.4.2] — 2026-06-29
 

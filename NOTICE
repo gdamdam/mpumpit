@@ -38,12 +38,3 @@ mpump:
 All other files (the MIDI input router, the SoundModule facade, the drum
 compatibility map, persistence, and the UI) are original to mpumpit and are
 likewise licensed AGPL-3.0-only.
-
-──────────────────────────────────────────────────────────────────────────────
-Bundled font — Chakra Petch
-──────────────────────────────────────────────────────────────────────────────
-
-public/fonts/chakra-petch-*.woff2 is the "Chakra Petch" typeface (used for the
-mpumpit wordmark, matching mpump's brand), Copyright (C) Cadson Demak, licensed
-under the SIL Open Font License 1.1 (https://scripts.sil.org/OFL). The OFL is
-independent of mpumpit's AGPL-3.0-only license and applies only to the font.
