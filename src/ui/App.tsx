@@ -29,7 +29,6 @@ export function App({ createEngine }: AppProps = {}) {
   const qwertyRef = useRef<QwertyKeyboard | null>(null);
   const qwertyTargetRef = useRef<Part>("synth");
   const qwertyRouteRef = useRef<"direct" | "midi">("direct");
-  const flashRef = useRef<(part: Part) => void>(() => {});
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimers = useRef<Partial<Record<Part, ReturnType<typeof setTimeout>>>>({});
 
@@ -72,7 +71,6 @@ export function App({ createEngine }: AppProps = {}) {
       if (t) clearTimeout(t);
       flashTimers.current[part] = setTimeout(() => setActivity((a) => ({ ...a, [part]: false })), 140);
     };
-    flashRef.current = flash; // so direct-routed keyboard notes blink too
     const router = new MidiRouter({
       sink: sm,
       channels: settings?.channels,
@@ -101,25 +99,26 @@ export function App({ createEngine }: AppProps = {}) {
     const qwerty = new QwertyKeyboard({
       onNoteOn: (note, vel) => {
         const part = qwertyTargetRef.current;
+        const r = routerRef.current;
+        if (!r) return;
         if (qwertyRouteRef.current === "midi") {
-          const r = routerRef.current;
-          if (!r) return;
           const ch = r.getChannels()[part];
           r.handleMessage("qwerty-keyboard", [0x90 | (ch - 1), note, vel]);
         } else {
-          smRef.current?.noteOn(part, note, vel);
-          flashRef.current(part);
+          // Direct, but through the router so the voice shares ownership with
+          // hardware MIDI (no cutting a shared note when one holder releases).
+          r.directNoteOn("qwerty-keyboard", part, note, vel);
         }
       },
       onNoteOff: (note) => {
         const part = qwertyTargetRef.current;
+        const r = routerRef.current;
+        if (!r) return;
         if (qwertyRouteRef.current === "midi") {
-          const r = routerRef.current;
-          if (!r) return;
           const ch = r.getChannels()[part];
           r.handleMessage("qwerty-keyboard", [0x80 | (ch - 1), note, 0]);
         } else {
-          smRef.current?.noteOff(part, note);
+          r.directNoteOff("qwerty-keyboard", part, note);
         }
       },
       onChange: () => bump(),
@@ -128,6 +127,10 @@ export function App({ createEngine }: AppProps = {}) {
 
     const unsub = sm.subscribe(() => { bump(); schedulePersist(); });
     void router.enable().then((perm) => {
+      // Under StrictMode the first (disposed) router's grant can resolve after
+      // the live one is mounted — ignore stale results so we don't clobber the
+      // live UI state with idle/empty.
+      if (routerRef.current !== router) return;
       setPermission(perm);
       setInputs(router.listInputs());
     });

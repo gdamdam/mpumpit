@@ -189,8 +189,20 @@ export class MidiRouter {
       // only delivers messages from an open port. addEventListener alone leaves
       // the port closed, so virtual buses (macOS IAC, loopMIDI) stay silent.
       input.onmidimessage = handler;
-      try { void (input as unknown as { open?: () => Promise<unknown> }).open?.(); } catch { /* */ }
       this.handlers.set(input.id, handler);
+      // open() is belt-and-suspenders (onmidimessage already opens the port).
+      // It returns a promise — catch rejection so it isn't unhandled, and if the
+      // port genuinely failed to open, stop reporting it as listened-to.
+      try {
+        const opened = (input as unknown as { open?: () => Promise<unknown> }).open?.();
+        opened?.catch?.(() => {
+          if (this.handlers.get(input.id) === handler) {
+            try { input.onmidimessage = null; } catch { /* */ }
+            this.handlers.delete(input.id);
+            this.onStateChange?.();
+          }
+        });
+      } catch { /* sync throw — ignore */ }
     });
   }
 
@@ -221,15 +233,15 @@ export class MidiRouter {
 
   /** Public for tests; normally invoked from the midimessage listener. */
   handleMessage(inputId: string, data: Uint8Array | ReadonlyArray<number> | null | undefined): void {
-    if (!data) return;
+    if (!data || data.length === 0) return;
+    // Count EVERY inbound message (notes, CC, pitch bend, program change, clock,
+    // sysex) so "MIDI rx" reliably shows whether anything is arriving at all.
+    this.rxCount++;
     const ev = parseMidiMessage(data);
-    // Blink the MIDI-IN indicator for any real message, even on an unrouted
-    // channel — so "device sending but silent" is visible (channel mismatch)
-    // vs "nothing arriving" (connection problem).
-    if (ev.kind === "noteOn" || ev.kind === "noteOff" || ev.kind === "allNotesOff") {
-      this.rxCount++;
-      this.onRawActivity?.();
-    }
+    // Blink the MIDI-IN indicator on any real message except clock/realtime
+    // (which would otherwise hold the LED solid). Shows channel mismatch
+    // (device sending, unrouted) vs nothing arriving.
+    if (ev.kind !== "clock") this.onRawActivity?.();
     switch (ev.kind) {
       case "noteOn":
         this.routeNoteOn(inputId, ev.channel, ev.note, ev.velocity);
@@ -310,6 +322,31 @@ export class MidiRouter {
       if (input) input.onmidimessage = null;
       this.handlers.delete(inputId);
     }
+  }
+
+  /**
+   * Play a note routed DIRECTLY to a part — bypassing channel routing and the
+   * drum-map — while sharing the SAME active-note ownership as inbound MIDI.
+   * So if a controller and the computer keyboard hold the same part+note, the
+   * engine voice is ref-counted and only silenced when the LAST holder releases.
+   * `ownerId` namespaces the source (e.g. "qwerty-keyboard").
+   */
+  directNoteOn(ownerId: string, part: Part, note: number, velocity: number): void {
+    const ownerKey = `${ownerId}|${part}|${note}`;
+    const existing = this.owners.get(ownerKey);
+    if (existing) this.removeRef(existing.part, existing.engineNote, ownerKey);
+    this.owners.set(ownerKey, { part, engineNote: note });
+    this.addRef(part, note, ownerKey);
+    this.sink.noteOn(part, note, velocity);
+    this.onActivity?.(part);
+  }
+
+  directNoteOff(ownerId: string, part: Part, note: number): void {
+    const ownerKey = `${ownerId}|${part}|${note}`;
+    const owner = this.owners.get(ownerKey);
+    if (!owner) return;
+    this.owners.delete(ownerKey);
+    this.releaseRef(owner.part, owner.engineNote, ownerKey);
   }
 
   /** Release all active notes for one part (e.g. before a preset change). */

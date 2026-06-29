@@ -71,6 +71,7 @@ type Listener = (e: { data: Uint8Array }) => void;
 export class FakeMIDIInput {
   state: "connected" | "disconnected" = "connected";
   onmidimessage: Listener | null = null;
+  openShouldReject = false;
   private listeners = new Set<Listener>();
 
   constructor(
@@ -85,7 +86,7 @@ export class FakeMIDIInput {
   removeEventListener(type: string, cb: EventListenerOrEventListenerObject) {
     if (type === "midimessage") this.listeners.delete(cb as unknown as Listener);
   }
-  open() { return Promise.resolve(this); }
+  open() { return this.openShouldReject ? Promise.reject(new Error("open failed")) : Promise.resolve(this); }
   /** Simulate an inbound MIDI message (delivers to both attach styles). */
   send(bytes: number[]) {
     const data = Uint8Array.from(bytes);

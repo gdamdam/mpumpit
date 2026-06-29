@@ -3,6 +3,21 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] — 2026-06-29
+
+### Fixed
+- Direct computer-keyboard notes now share active-note ownership with inbound
+  MIDI (routed through the router, ref-counted). A note held by both a
+  controller and the keyboard is no longer cut when only one of them releases.
+- `open()`'s returned promise rejection is now caught; a port that fails to open
+  is removed from the listened set so the diagnostics don't claim it's listening.
+- Diagnostics "MIDI rx" now counts every inbound message (CC, pitch bend,
+  program change, clock, sysex), not just notes — so it reliably shows whether
+  any MIDI is arriving. The MIDI-IN LED still ignores clock/realtime so it
+  doesn't sit solid.
+- The disposed (StrictMode) router's pending grant can no longer overwrite the
+  live router's UI state with idle — stale results are ignored by identity.
+
 ## [0.4.1] — 2026-06-28
 
 ### Fixed

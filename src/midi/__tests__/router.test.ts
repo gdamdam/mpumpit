@@ -52,6 +52,53 @@ describe("MidiRouter — channel routing", () => {
     r.handleMessage("in", noteOn(7, 60)); // channel 7 maps to no part
     expect(raw).toBe(1); // MIDI-IN still blinks → device is sending
   });
+
+  it("counts EVERY inbound message for diagnostics (CC, pitch bend, PC, clock)", () => {
+    const r = new MidiRouter({ sink: new RecordingSink() });
+    r.handleMessage("in", [0xb0, 7, 100]); // normal CC (volume)
+    r.handleMessage("in", [0xe0, 0, 64]); // pitch bend
+    r.handleMessage("in", [0xc0, 5]); // program change
+    r.handleMessage("in", [0xf8]); // clock
+    expect(r.getReceivedCount()).toBe(4);
+  });
+
+  it("does not blink the MIDI-IN LED on clock, but still counts it", () => {
+    let raw = 0;
+    const r = new MidiRouter({ sink: new RecordingSink(), onRawActivity: () => raw++ });
+    r.handleMessage("in", [0xf8]);
+    expect(raw).toBe(0); // clock would otherwise hold the LED solid
+    expect(r.getReceivedCount()).toBe(1);
+  });
+});
+
+describe("MidiRouter — direct (keyboard) routing shares ownership", () => {
+  it("does not cut a voice held by both hardware and the keyboard", () => {
+    const sink = new RecordingSink();
+    const r = new MidiRouter({ sink });
+    r.handleMessage("hw", noteOn(1, 60)); // hardware → synth 60
+    r.directNoteOn("qwerty", "synth", 60, 100); // keyboard → same voice, direct
+    expect(r.activeVoiceCount).toBe(1);
+    r.directNoteOff("qwerty", "synth", 60); // keyboard releases
+    expect(sink.offs).toHaveLength(0); // hardware still holds it
+    r.handleMessage("hw", noteOff(1, 60)); // hardware releases
+    expect(sink.offs).toEqual([["synth", 60]]); // now silenced
+  });
+
+  it("direct notes bypass channel routing and drum-map", () => {
+    const sink = new RecordingSink();
+    const r = new MidiRouter({ sink, drumMap: { 36: 38 } });
+    r.directNoteOn("qwerty", "drums", 36, 100); // 'A kick' stays kick
+    expect(sink.ons).toEqual([["drums", 36, 100]]);
+  });
+
+  it("panic and releasePart clear direct notes too", () => {
+    const sink = new RecordingSink();
+    const r = new MidiRouter({ sink });
+    r.directNoteOn("qwerty", "bass", 40, 100);
+    r.releasePart("bass");
+    expect(sink.offs).toEqual([["bass", 40]]);
+    expect(r.activeVoiceCount).toBe(0);
+  });
 });
 
 describe("MidiRouter — note lifecycle & ownership", () => {
@@ -230,6 +277,17 @@ describe("MidiRouter — Web MIDI access, hot-plug & input selection", () => {
     a.send(noteOn(1, 60));
     router.setSelectedInput("b");
     expect(sink.offs).toEqual([["synth", 60]]);
+    restore();
+  });
+
+  it("drops a port from 'listening' if open() rejects (and doesn't leak a rejection)", async () => {
+    const a = new FakeMIDIInput("a", "A");
+    a.openShouldReject = true;
+    access.addInput(a);
+    const router = new MidiRouter({ sink });
+    await router.enable();
+    await new Promise((r) => setTimeout(r, 0)); // let open().catch run
+    expect(router.getListenerCount()).toBe(0);
     restore();
   });
 
