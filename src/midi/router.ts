@@ -63,6 +63,7 @@ export class MidiRouter {
   private permission: MidiPermissionState = "idle";
   private disposed = false;
   private rxCount = 0;
+  private clockCount = 0;
 
   // inputId -> bound message handler currently attached
   private handlers = new Map<string, (e: MIDIMessageEvent) => void>();
@@ -238,10 +239,15 @@ export class MidiRouter {
     // sysex) so "MIDI rx" reliably shows whether anything is arriving at all.
     this.rxCount++;
     const ev = parseMidiMessage(data);
-    // Blink the MIDI-IN indicator on any real message except clock/realtime
-    // (which would otherwise hold the LED solid). Shows channel mismatch
-    // (device sending, unrouted) vs nothing arriving.
-    if (ev.kind !== "clock") this.onRawActivity?.();
+    // Blink the MIDI-IN indicator on any real message. Clock would hold the LED
+    // solid at 24 PPQN, so signal it only ~once per quarter note — enough to
+    // refresh the diagnostics counter so a clock-only device isn't shown as
+    // "MIDI rx 0" forever, without a solid LED.
+    if (ev.kind === "clock") {
+      if (++this.clockCount % 24 === 0) this.onRawActivity?.();
+    } else {
+      this.onRawActivity?.();
+    }
     switch (ev.kind) {
       case "noteOn":
         this.routeNoteOn(inputId, ev.channel, ev.note, ev.velocity);

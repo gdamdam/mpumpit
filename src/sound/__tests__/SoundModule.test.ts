@@ -325,6 +325,26 @@ describe("SoundModule — sound editing & user presets", () => {
     sm.deleteUserPreset("synth", "Temp");
     expect(sm.getState().parts.synth.preset).toBe("Default");
   });
+
+  it("switching kits resets every voice, including CB2 / note 56", () => {
+    sm.setDrumVoiceParam(56, { tune: 12 });
+    expect(sm.getDrumVoice(56).tune).toBe(12);
+    const before = engine.callsTo("setDrumVoice").length;
+    sm.setPreset("drums", "Techno");
+    expect(sm.getDrumVoice(56).tune).toBe(0); // reset to default in state
+    const after = engine.callsTo("setDrumVoice").slice(before);
+    expect(after.some((c) => c.args[0] === 56)).toBe(true); // and re-applied to the engine
+  });
+
+  it("user presets never collide with a built-in name (stay recallable)", () => {
+    sm.setSynthParam("synth", { cutoff: 321 });
+    sm.saveUserPreset("synth", "Default"); // collides with the built-in
+    expect(sm.getUserPresetNames("synth")).toContain("Default (user)");
+    expect(sm.getUserPresetNames("synth")).not.toContain("Default");
+    sm.setPreset("synth", "Acid Squelch");
+    sm.setPreset("synth", "Default (user)");
+    expect(sm.getSynthParams("synth").cutoff).toBe(321); // recalled, not the built-in
+  });
 });
 
 describe("SoundModule — editing persistence & back-compat", () => {

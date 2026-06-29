@@ -30,6 +30,7 @@ export function App({ createEngine }: AppProps = {}) {
   const qwertyRef = useRef<QwertyKeyboard | null>(null);
   const qwertyTargetRef = useRef<Part>("synth");
   const qwertyRouteRef = useRef<"direct" | "midi">("direct");
+  const lastTest = useRef<{ part: Part; note: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimers = useRef<Partial<Record<Part, ReturnType<typeof setTimeout>>>>({});
 
@@ -226,9 +227,18 @@ export function App({ createEngine }: AppProps = {}) {
   // ownership); auto-release after a moment for sustained synth/bass voices.
   const onTest = (note: number) => {
     const part = editing;
-    if (!part) return;
-    routerRef.current?.directNoteOn("editor-test", part, note, 110);
-    setTimeout(() => routerRef.current?.directNoteOff("editor-test", part, note), 400);
+    const r = routerRef.current;
+    if (!part || !r) return;
+    // Release the previous test note (and cancel its timer) before retriggering,
+    // so a stale timeout can't cut off a newer audition.
+    const prev = lastTest.current;
+    if (prev) { clearTimeout(prev.timer); r.directNoteOff("editor-test", prev.part, prev.note); }
+    r.directNoteOn("editor-test", part, note, 110);
+    const timer = setTimeout(() => {
+      routerRef.current?.directNoteOff("editor-test", part, note);
+      lastTest.current = null;
+    }, 400);
+    lastTest.current = { part, note, timer };
   };
 
   const onDrumMapChange = (overrides: Record<number, number>) => {

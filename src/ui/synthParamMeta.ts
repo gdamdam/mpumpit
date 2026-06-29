@@ -11,6 +11,7 @@ export interface SynthKnob {
   min: number;
   max: number;
   step: number;
+  def: number; // effective engine default when the param is unset
   format?: "int" | "sec" | "hz" | "pct" | "cents" | "raw";
 }
 
@@ -31,38 +32,39 @@ const OSC_TYPES: readonly OscType[] = ["sawtooth", "square", "sine", "triangle",
 
 export const OSC_TYPE_SELECT: SynthSelect = { key: "oscType", label: "Osc", options: OSC_TYPES };
 
+// noteLength is intentionally omitted: all mpumpit input is live (gate 0), and
+// noteLength only affects the unused scheduled-note path — a dead control here.
 export const OSC_KNOBS: SynthKnob[] = [
-  { key: "detune", label: "DET", min: -50, max: 50, step: 1, format: "cents" },
-  { key: "subLevel", label: "SUB LVL", min: 0, max: 1, step: 0.01, format: "pct" },
-  { key: "unison", label: "VOICES", min: 1, max: 7, step: 2, format: "int" },
-  { key: "unisonSpread", label: "SPREAD", min: 0, max: 50, step: 1, format: "cents" },
-  { key: "noteLength", label: "LEN", min: 1, max: 16, step: 1, format: "int" },
-  { key: "gain", label: "GAIN", min: 0.5, max: 2, step: 0.01, format: "raw" },
+  { key: "detune", label: "DET", min: -50, max: 50, step: 1, format: "cents", def: 0 },
+  { key: "subLevel", label: "SUB LVL", min: 0, max: 1, step: 0.01, format: "pct", def: 0.5 },
+  { key: "unison", label: "VOICES", min: 1, max: 7, step: 2, format: "int", def: 1 },
+  { key: "unisonSpread", label: "SPREAD", min: 0, max: 50, step: 1, format: "cents", def: 25 },
+  { key: "gain", label: "GAIN", min: 0.5, max: 2, step: 0.01, format: "raw", def: 1 },
 ];
 
 export const OSC_TOGGLES: SynthToggle[] = [{ key: "subOsc", label: "SUB" }];
 
 // Envelope knobs (part of the oscillator section).
 export const ENV_KNOBS: SynthKnob[] = [
-  { key: "attack", label: "ATK", min: 0.001, max: 1, step: 0.005, format: "sec" },
-  { key: "decay", label: "DEC", min: 0.01, max: 1, step: 0.01, format: "sec" },
-  { key: "sustain", label: "SUS", min: 0, max: 1, step: 0.01, format: "pct" },
-  { key: "release", label: "REL", min: 0.01, max: 2, step: 0.01, format: "sec" },
+  { key: "attack", label: "ATK", min: 0.001, max: 1, step: 0.005, format: "sec", def: 0.005 },
+  { key: "decay", label: "DEC", min: 0.01, max: 1, step: 0.01, format: "sec", def: 0.15 },
+  { key: "sustain", label: "SUS", min: 0, max: 1, step: 0.01, format: "pct", def: 0.6 },
+  { key: "release", label: "REL", min: 0.01, max: 2, step: 0.01, format: "sec", def: 0.06 },
 ];
 
 // Osc-type-conditional controls — the component renders these based on oscType.
 export const OSC_TYPE_EXTRAS: Partial<Record<OscType, { knobs?: SynthKnob[]; selects?: SynthSelect[] }>> = {
   sync: {
-    knobs: [{ key: "syncRatio", label: "RATIO", min: 1, max: 16, step: 0.1, format: "raw" }],
+    knobs: [{ key: "syncRatio", label: "RATIO", min: 1, max: 16, step: 0.1, format: "raw", def: 2 }],
   },
   fm: {
     knobs: [
-      { key: "fmRatio", label: "RATIO", min: 0.5, max: 16, step: 0.1, format: "raw" },
-      { key: "fmIndex", label: "INDEX", min: 0, max: 100, step: 1, format: "int" },
+      { key: "fmRatio", label: "RATIO", min: 0.5, max: 16, step: 0.1, format: "raw", def: 2 },
+      { key: "fmIndex", label: "INDEX", min: 0, max: 100, step: 1, format: "int", def: 5 },
     ],
   },
   wavetable: {
-    knobs: [{ key: "wavetablePos", label: "MORPH", min: 0, max: 1, step: 0.01, format: "pct" }],
+    knobs: [{ key: "wavetablePos", label: "MORPH", min: 0, max: 1, step: 0.01, format: "pct", def: 0.5 }],
     selects: [{ key: "wavetable", label: "Wave", options: ["basic", "vocal", "metallic", "pad", "organ"] }],
   },
 };
@@ -77,11 +79,11 @@ export const FILTER_SELECTS: SynthSelect[] = [
 export const FILTER_TOGGLES: SynthToggle[] = [{ key: "filterOn", label: "ON" }];
 
 export const FILTER_KNOBS: SynthKnob[] = [
-  { key: "cutoff", label: "CUT", min: 100, max: 8000, step: 50, format: "hz" },
-  { key: "resonance", label: "RES", min: 0.5, max: 20, step: 0.5, format: "raw" },
-  { key: "filterEnvDepth", label: "ENV", min: 0, max: 1, step: 0.01, format: "pct" },
-  { key: "filterDecay", label: "DEC", min: 0, max: 2, step: 0.01, format: "sec" },
-  { key: "filterDrive", label: "DRV", min: 0, max: 1, step: 0.01, format: "pct" },
+  { key: "cutoff", label: "CUT", min: 100, max: 8000, step: 50, format: "hz", def: 4000 },
+  { key: "resonance", label: "RES", min: 0.5, max: 20, step: 0.5, format: "raw", def: 4 },
+  { key: "filterEnvDepth", label: "ENV", min: 0, max: 1, step: 0.01, format: "pct", def: 0 },
+  { key: "filterDecay", label: "DEC", min: 0, max: 2, step: 0.01, format: "sec", def: 0 },
+  { key: "filterDrive", label: "DRV", min: 0, max: 1, step: 0.01, format: "pct", def: 0 },
 ];
 
 // ── LFO ──────────────────────────────────────────────────────────────────────
@@ -98,8 +100,8 @@ export const LFO_TOGGLES: SynthToggle[] = [
 ];
 
 export const LFO_KNOBS: SynthKnob[] = [
-  { key: "lfoRate", label: "RATE", min: 0.1, max: 20, step: 0.1, format: "hz" },
-  { key: "lfoDepth", label: "DEPTH", min: 0, max: 1, step: 0.01, format: "pct" },
+  { key: "lfoRate", label: "RATE", min: 0.1, max: 20, step: 0.1, format: "hz", def: 2 },
+  { key: "lfoDepth", label: "DEPTH", min: 0, max: 1, step: 0.01, format: "pct", def: 0.5 },
 ];
 
 // ── Sections ───────────────────────────────────────────────────────────────

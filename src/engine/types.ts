@@ -147,6 +147,13 @@ export const DEFAULT_DRUM_VOICE: DrumVoiceParams = {
   level: 1.0,
 };
 
+/**
+ * Every drum note the engine can synthesize (drumSynth.DRUM_SYNTHS keys) — the
+ * 9 DRUM_VOICES plus 56 (a second cowbell). The editable set; used so loading a
+ * kit resets ALL of them, including notes a given kit doesn't define.
+ */
+export const DRUM_NOTES: readonly number[] = [36, 37, 38, 42, 46, 47, 49, 50, 51, 56];
+
 // ── Effects ────────────────────────────────────────────────────────────────
 
 export interface EffectParams {

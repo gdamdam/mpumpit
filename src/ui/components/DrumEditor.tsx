@@ -32,7 +32,7 @@ export function DrumEditor(props: { sm: SoundModule; onChange: () => void; onTes
       <div className="ed-knobs">
         {DRUM_PARAMS.map((k) => (
           <Knob key={k.key} label={k.label} min={k.min} max={k.max} step={k.step}
-            value={Number((voice[k.key] as number | undefined) ?? k.min)}
+            value={Number((voice[k.key] as number | undefined) ?? k.def)}
             onChange={(v) => set({ [k.key]: v } as Partial<DrumVoiceParams>)} />
         ))}
       </div>

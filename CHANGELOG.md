@@ -3,6 +3,24 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] — 2026-06-29
+
+First stable release. Post-review editor hardening:
+
+### Fixed
+- Editors show each parameter's **effective default** (not the slider minimum)
+  for unset values — e.g. kick PAN 0 / CLICK 0.15 / LPF bypass, synth SPREAD 25 —
+  so a control no longer jumps abruptly the first time it's touched.
+- Switching a drum kit now resets **every** voice, including CB2 (note 56) — which
+  no kit defines — so the engine no longer keeps a stale edited voice.
+- A user preset can no longer collide with a built-in name (auto-suffixed
+  `" (user)"`), so saved presets stay recallable.
+- A clock-only MIDI device now refreshes the **MIDI rx** diagnostic (~once per
+  beat) instead of showing `rx 0` forever — without holding the activity LED solid.
+- Removed the **LEN** (note-length) synth control: it only affected the unused
+  scheduled-note path, so it had no effect on live input.
+- Rapid **▶ Test** clicks no longer let a stale timeout cut off a newer audition.
+
 ## [0.5.0] — 2026-06-29
 
 ### Added

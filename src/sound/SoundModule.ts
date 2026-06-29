@@ -12,7 +12,7 @@
 //    model) plus a fixed per-part channel strip (EQ / HPF / pan / gate)
 
 import type { EffectName, EffectParams, SynthParams, DrumVoiceParams } from "../engine/types";
-import { DEFAULT_EFFECTS, DEFAULT_SYNTH_PARAMS, DEFAULT_DRUM_VOICE } from "../engine/types";
+import { DEFAULT_EFFECTS, DEFAULT_SYNTH_PARAMS, DEFAULT_DRUM_VOICE, DRUM_NOTES } from "../engine/types";
 import { SYNTH_PRESETS, BASS_PRESETS, DRUM_KIT_PRESETS, type SynthPreset, type DrumKitPreset } from "../engine/soundPresets";
 import { AudioPort } from "../engine/AudioPort";
 import { PART_TO_AUDIO_CH, type Part } from "../midi/types";
@@ -94,10 +94,17 @@ export function defaultSoundState(): SoundState {
   };
 }
 
-/** Voices object (note → params) for a drum kit, cloned. */
+/**
+ * Voices object (note → params) for a drum kit, covering EVERY editable drum
+ * note: a kit's own voices, with defaults filled in for notes it doesn't define
+ * (e.g. 56/CB2). This way switching kits resets all voices in state AND engine.
+ */
 function kitVoices(kit: DrumKitPreset): Record<number, DrumVoiceParams> {
   const out: Record<number, DrumVoiceParams> = {};
-  for (const [note, vp] of Object.entries(kit.voices)) out[Number(note)] = { ...vp };
+  for (const note of DRUM_NOTES) {
+    const vp = kit.voices[note];
+    out[note] = vp ? { ...vp } : { ...DEFAULT_DRUM_VOICE };
+  }
   return out;
 }
 
@@ -442,8 +449,15 @@ export class SoundModule {
 
   /** Save the part's current live sound as a named user preset (and select it). */
   saveUserPreset(part: Part, rawName: string): void {
-    const name = rawName.trim();
-    if (!name) return;
+    const trimmed = rawName.trim();
+    if (!trimmed) return;
+    // A user preset must not share a built-in's name — lookup prefers built-ins,
+    // which would make the saved one unrecallable. Disambiguate if it collides.
+    const builtins = part === "drums"
+      ? DRUM_KIT_PRESETS.map((p) => p.name)
+      : (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS).map((p) => p.name);
+    let name = trimmed;
+    while (builtins.includes(name)) name += " (user)";
     if (part === "drums") {
       upsertPreset(this.state.userPresets.drums, { name, voices: this.getDrumVoices() });
     } else {

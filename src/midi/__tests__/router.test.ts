@@ -62,12 +62,20 @@ describe("MidiRouter — channel routing", () => {
     expect(r.getReceivedCount()).toBe(4);
   });
 
-  it("does not blink the MIDI-IN LED on clock, but still counts it", () => {
+  it("does not blink the MIDI-IN LED on a single clock, but still counts it", () => {
     let raw = 0;
     const r = new MidiRouter({ sink: new RecordingSink(), onRawActivity: () => raw++ });
     r.handleMessage("in", [0xf8]);
     expect(raw).toBe(0); // clock would otherwise hold the LED solid
     expect(r.getReceivedCount()).toBe(1);
+  });
+
+  it("refreshes diagnostics on clock ~once per quarter note (clock-only device)", () => {
+    let raw = 0;
+    const r = new MidiRouter({ sink: new RecordingSink(), onRawActivity: () => raw++ });
+    for (let i = 0; i < 48; i++) r.handleMessage("in", [0xf8]); // 2 quarter notes @ 24 PPQN
+    expect(r.getReceivedCount()).toBe(48); // every clock counted
+    expect(raw).toBe(2); // signalled twice, not 48× → rx updates without a solid LED
   });
 });
 

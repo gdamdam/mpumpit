@@ -32,7 +32,7 @@ export function SynthEditor(props: { sm: SoundModule; part: SynthPart; onChange:
 
   const knob = (k: SynthKnob) => (
     <Knob key={k.key} label={k.label} min={k.min} max={k.max} step={k.step}
-      value={Number((p[k.key] as number | undefined) ?? k.min)}
+      value={Number((p[k.key] as number | undefined) ?? k.def)}
       onChange={(v) => set({ [k.key]: v } as Partial<SynthParams>)} format={fmtFor(k.format)} />
   );
   const select = (s: SynthSelect) => (
