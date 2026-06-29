@@ -326,14 +326,23 @@ describe("SoundModule — sound editing & user presets", () => {
     expect(sm.getState().parts.synth.preset).toBe("Default");
   });
 
-  it("switching kits resets every voice, including CB2 / note 56", () => {
+  it("switching kits fully resets every voice (incl optional params and CB2)", () => {
     sm.setDrumVoiceParam(56, { tune: 12 });
-    expect(sm.getDrumVoice(56).tune).toBe(12);
+    sm.setDrumVoiceParam(36, { filterCutoff: 0.3 }); // optional param a kit may omit
     const before = engine.callsTo("setDrumVoice").length;
     sm.setPreset("drums", "Techno");
-    expect(sm.getDrumVoice(56).tune).toBe(0); // reset to default in state
-    const after = engine.callsTo("setDrumVoice").slice(before);
-    expect(after.some((c) => c.args[0] === 56)).toBe(true); // and re-applied to the engine
+    expect(sm.getDrumVoice(56).tune).toBe(0); // CB2 reset
+    expect(sm.getDrumVoice(36).filterCutoff).toBe(1); // stale optional cleared, not retained
+    // the engine received a COMPLETE voice for 36 (filterCutoff explicitly reset)
+    const kick = engine.callsTo("setDrumVoice").slice(before).find((c) => c.args[0] === 36)!;
+    expect((kick.args[1] as { filterCutoff: number }).filterCutoff).toBe(1);
+    expect(engine.callsTo("setDrumVoice").slice(before).some((c) => c.args[0] === 56)).toBe(true);
+  });
+
+  it("exposes per-note pan defaults, not a global 0", () => {
+    expect(sm.getDrumVoice(37).pan).toBe(0.2); // RS
+    expect(sm.getDrumVoice(56).pan).toBe(-0.25); // CB2
+    expect(sm.getDrumVoice(36).pan).toBe(0); // BD
   });
 
   it("user presets never collide with a built-in name (stay recallable)", () => {

@@ -15,6 +15,7 @@ import type { EffectName, EffectParams, SynthParams, DrumVoiceParams } from "../
 import { DEFAULT_EFFECTS, DEFAULT_SYNTH_PARAMS, DEFAULT_DRUM_VOICE, DRUM_NOTES } from "../engine/types";
 import { SYNTH_PRESETS, BASS_PRESETS, DRUM_KIT_PRESETS, type SynthPreset, type DrumKitPreset } from "../engine/soundPresets";
 import { AudioPort } from "../engine/AudioPort";
+import { DRUM_PAN } from "../engine/drumSynth";
 import { PART_TO_AUDIO_CH, type Part } from "../midi/types";
 import {
   MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP,
@@ -94,17 +95,31 @@ export function defaultSoundState(): SoundState {
   };
 }
 
+// Engine defaults for the optional drum params (drumSynth synth-fn defaults).
+const OPTIONAL_DRUM_DEFAULTS = {
+  click: 0.15, clickTune: 0, sweepDepth: 0.5, sweepRate: 0.5, noiseMix: 0.55, color: 0, filterCutoff: 1,
+} as const;
+
 /**
- * Voices object (note → params) for a drum kit, covering EVERY editable drum
- * note: a kit's own voices, with defaults filled in for notes it doesn't define
- * (e.g. 56/CB2). This way switching kits resets all voices in state AND engine.
+ * A COMPLETE default voice for a note — tune/decay/level + per-note pan (DRUM_PAN)
+ * + every optional param at its engine default. Used as the base everywhere so a
+ * voice sent to the engine always specifies every key: AudioPort.setDrumVoice
+ * MERGES over prior state, so an incomplete voice would let a previous kit's
+ * optional params (e.g. filterCutoff) leak through. A full voice overwrites them.
+ */
+function defaultVoice(note: number): DrumVoiceParams {
+  return { ...DEFAULT_DRUM_VOICE, pan: DRUM_PAN[note] ?? 0, ...OPTIONAL_DRUM_DEFAULTS };
+}
+
+/**
+ * Voices for a drum kit, covering EVERY editable note as a COMPLETE param set:
+ * full defaults overlaid with the kit's own values. Notes a kit omits (e.g.
+ * 56/CB2) get full defaults, and switching kits fully resets every voice in
+ * state AND the engine (no stale optional params).
  */
 function kitVoices(kit: DrumKitPreset): Record<number, DrumVoiceParams> {
   const out: Record<number, DrumVoiceParams> = {};
-  for (const note of DRUM_NOTES) {
-    const vp = kit.voices[note];
-    out[note] = vp ? { ...vp } : { ...DEFAULT_DRUM_VOICE };
-  }
+  for (const note of DRUM_NOTES) out[note] = { ...defaultVoice(note), ...(kit.voices[note] ?? {}) };
   return out;
 }
 
@@ -419,7 +434,9 @@ export class SoundModule {
   }
 
   getDrumVoice(note: number): DrumVoiceParams {
-    return { ...(this.state.parts.drums.voices?.[note] ?? DEFAULT_DRUM_VOICE) };
+    // Fill from the complete per-note defaults so the editor shows real values
+    // (e.g. per-note pan), not slider minima, even for an unset/partial voice.
+    return { ...defaultVoice(note), ...(this.state.parts.drums.voices?.[note] ?? {}) };
   }
 
   getDrumVoices(): Record<number, DrumVoiceParams> {
@@ -428,7 +445,9 @@ export class SoundModule {
 
   setDrumVoiceParam(note: number, patch: Partial<DrumVoiceParams>): void {
     const voices = (this.state.parts.drums.voices ??= {});
-    const next = { ...(voices[note] ?? DEFAULT_DRUM_VOICE), ...patch };
+    // Base on the complete default voice so the value written (and sent to the
+    // engine) specifies every key — no stale params survive a later kit change.
+    const next = { ...defaultVoice(note), ...(voices[note] ?? {}), ...patch };
     voices[note] = next;
     this.engine?.setDrumVoice(note, next);
     this.emit();

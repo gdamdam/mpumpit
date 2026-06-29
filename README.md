@@ -9,7 +9,7 @@
 [![CI](https://github.com/gdamdam/mpumpit/actions/workflows/ci.yml/badge.svg)](https://github.com/gdamdam/mpumpit/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-4c8bf5)](./LICENSE)
 [![version](https://img.shields.io/badge/version-1.0.0-e0a23c)](./CHANGELOG.md)
-[![tests](https://img.shields.io/badge/tests-105_passing-5ec27a)](#manual-verification)
+[![tests](https://img.shields.io/badge/tests-106_passing-5ec27a)](#manual-verification)
 ![stack](https://img.shields.io/badge/React_·_TypeScript_·_Vite-1c1d21)
 ![api](https://img.shields.io/badge/Web_MIDI_·_Web_Audio-1c1d21)
 

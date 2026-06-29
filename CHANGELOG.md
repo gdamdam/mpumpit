@@ -20,6 +20,11 @@ First stable release. Post-review editor hardening:
 - Removed the **LEN** (note-length) synth control: it only affected the unused
   scheduled-note path, so it had no effect on live input.
 - Rapid **▶ Test** clicks no longer let a stale timeout cut off a newer audition.
+- Loading a drum kit now sends a **complete** voice for every note, so a prior
+  kit's optional params (e.g. `filterCutoff`) can't leak through the engine's
+  merge — switching kits truly resets the sound.
+- Drum voices expose their **per-note pan defaults** (RS 0.2, CB2 −0.25, …)
+  rather than a global 0, matching the engine.
 
 ## [0.5.0] — 2026-06-29
 
