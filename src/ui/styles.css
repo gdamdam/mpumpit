@@ -249,36 +249,26 @@ input[type="number"] { background: #15161a; color: var(--text); }
 }
 .fx-editor {
   min-width: 280px; max-width: 90vw; padding: 16px;
-  background: var(--panel); border: 1px solid var(--green); border-radius: 10px;
-  box-shadow: 0 0 30px color-mix(in srgb, var(--green) 22%, transparent);
+  background: var(--panel); border: 1px solid var(--amber); border-radius: 10px;
+  box-shadow: 0 0 30px color-mix(in srgb, var(--amber) 22%, transparent);
 }
 .fx-editor-header {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
 }
-.fx-editor-title { font-size: 14px; font-weight: 700; color: var(--green); }
+.fx-editor-title { font-size: 14px; font-weight: 700; color: var(--amber); }
 .fx-editor-close {
   font-size: 16px; background: none; border: none; cursor: pointer;
-  color: var(--green); opacity: 0.7;
+  color: var(--amber); opacity: 0.7;
 }
 .fx-editor-close:hover { opacity: 1; }
 .fx-editor-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .fx-editor-seg { flex-wrap: wrap; }
 .fx-editor-label {
-  min-width: 60px; font-size: 11px; font-weight: 700; color: var(--green); opacity: 0.7;
+  min-width: 60px; font-size: 11px; font-weight: 700; color: var(--amber); opacity: 0.7;
 }
-.fx-editor-slider {
-  flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
-  background: var(--line); border-radius: 2px; outline: none;
-}
-.fx-editor-slider::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--green); cursor: pointer;
-}
-.fx-editor-slider::-moz-range-thumb {
-  width: 14px; height: 14px; border-radius: 50%; background: var(--green); border: none; cursor: pointer;
-}
+.fx-editor-slider { flex: 1; min-width: 60px; accent-color: var(--amber); }
 .fx-editor-value {
-  min-width: 50px; text-align: right; font-size: 10px; color: var(--green); opacity: 0.7;
+  min-width: 50px; text-align: right; font-size: 10px; color: var(--amber); opacity: 0.7;
 }
 .fx-vis { display: block; width: 100%; max-width: 200px; height: auto; margin: 4px auto 8px; border-radius: 4px; }
 .fx-editor-btn {
@@ -287,7 +277,7 @@ input[type="number"] { background: #15161a; color: var(--text); }
   background: var(--raised); color: var(--label); border: 1px solid var(--line);
 }
 .fx-editor-btn:hover:not(:disabled) { color: var(--text); }
-.fx-editor-btn.active { background: var(--green); color: #08160d; border-color: var(--green); }
+.fx-editor-btn.active { background: var(--amber); color: #1a1407; border-color: var(--amber); }
 .fx-editor-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .fx-editor-select { margin-left: 4px; }
 .fx-editor-reset {

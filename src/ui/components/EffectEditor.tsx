@@ -97,11 +97,12 @@ const EFFECT_NAMES: Record<EffectName, string> = {
   tremolo: "Tremolo",
 };
 
-// mpumpit green (--green #57c98a) for the visualizations.
-const COL = "var(--green)";
-const DIM = "rgba(87,201,138,0.18)";
-const FILL = "rgba(87,201,138,0.12)";
-const TXT = "rgba(87,201,138,0.5)";
+// App accent amber (--amber #e0a23c) for the visualizations, matching the rest
+// of the UI (sliders, knobs, toggles). Red threshold markers use --red below.
+const COL = "var(--amber)";
+const DIM = "rgba(224,162,60,0.18)";
+const FILL = "rgba(224,162,60,0.12)";
+const TXT = "rgba(224,162,60,0.5)";
 
 function EffectVis({ name, params }: { name: EffectName; params: Record<string, number | boolean | string> }) {
   const w = 200, h = 60;
