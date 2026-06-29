@@ -1,0 +1,392 @@
+/*
+ * EffectEditor — modal for adjusting one master effect's parameters, with a
+ * per-effect SVG visualization. Ported from mpump's EffectEditor to match its
+ * look and behaviour; adapted to mpumpit's SoundModule patch model and palette.
+ * Derived from mpump (https://github.com/gdamdam) — AGPL-3.0-only. See LICENSE
+ * and NOTICE.
+ */
+
+import { useEffect, type ReactNode } from "react";
+import type { EffectName, EffectParams } from "../../engine/types";
+import { DELAY_DIVISIONS } from "../../engine/types";
+
+interface Props {
+  name: EffectName;
+  params: EffectParams[EffectName];
+  /** Apply a partial param patch (one or more keys). */
+  onUpdate: (patch: Record<string, unknown>) => void;
+  onClose: () => void;
+  onReset: () => void;
+  /** Whether drums are routed through the FX chain. When false the per-effect
+   *  "EXCL. DRUMS" toggle is a no-op, so it's disabled. */
+  drumsInFx?: boolean;
+}
+
+interface SliderDef {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  unit?: string;
+  /** Fallback when the param isn't stored in DEFAULT_EFFECTS (e.g. crushRate). */
+  def?: number;
+}
+
+const EFFECT_SLIDERS: Record<EffectName, SliderDef[]> = {
+  delay: [
+    { key: "time", label: "Time", min: 0.05, max: 1.5, step: 0.01, unit: "s" },
+    { key: "feedback", label: "Feedback", min: 0, max: 0.9, step: 0.01 },
+    { key: "mix", label: "Mix", min: 0, max: 1, step: 0.01 },
+  ],
+  distortion: [
+    { key: "drive", label: "Drive", min: 1, max: 100, step: 1 },
+  ],
+  reverb: [
+    { key: "decay", label: "Decay", min: 0.5, max: 5, step: 0.1, unit: "s" },
+    { key: "mix", label: "Mix", min: 0, max: 1, step: 0.01 },
+  ],
+  compressor: [
+    { key: "threshold", label: "Threshold", min: -60, max: 0, step: 1, unit: "dB" },
+    { key: "ratio", label: "Ratio", min: 1, max: 20, step: 0.5 },
+  ],
+  highpass: [
+    { key: "cutoff", label: "Cutoff", min: 20, max: 2000, step: 10, unit: "Hz" },
+    { key: "q", label: "Q", min: 0.5, max: 15, step: 0.5 },
+  ],
+  chorus: [
+    { key: "rate", label: "Rate", min: 0.1, max: 10, step: 0.1, unit: "Hz" },
+    { key: "depth", label: "Depth", min: 0.001, max: 0.01, step: 0.001 },
+    { key: "mix", label: "Mix", min: 0, max: 1, step: 0.01 },
+  ],
+  phaser: [
+    { key: "rate", label: "Rate", min: 0.1, max: 5, step: 0.1, unit: "Hz" },
+    { key: "depth", label: "Depth", min: 100, max: 3000, step: 50 },
+  ],
+  bitcrusher: [
+    { key: "bits", label: "Bits", min: 2, max: 16, step: 1 },
+    { key: "crushRate", label: "Rate", min: 100, max: 44100, step: 100, unit: "Hz", def: 44100 },
+  ],
+  duck: [
+    { key: "depth", label: "Depth", min: 0.1, max: 1, step: 0.05 },
+    { key: "release", label: "Release", min: 0.01, max: 0.3, step: 0.01, unit: "s" },
+  ],
+  flanger: [
+    { key: "rate", label: "Rate", min: 0.1, max: 5, step: 0.1, unit: "Hz" },
+    { key: "depth", label: "Depth", min: 0, max: 1, step: 0.05 },
+    { key: "feedback", label: "Feedback", min: 0, max: 0.95, step: 0.05 },
+    { key: "mix", label: "Mix", min: 0, max: 1, step: 0.05 },
+  ],
+  tremolo: [
+    { key: "rate", label: "Rate", min: 0.5, max: 15, step: 0.5, unit: "Hz" },
+    { key: "depth", label: "Depth", min: 0, max: 1, step: 0.05 },
+  ],
+};
+
+const EFFECT_NAMES: Record<EffectName, string> = {
+  delay: "Delay",
+  distortion: "Distortion",
+  reverb: "Reverb",
+  compressor: "Compressor",
+  highpass: "High-Pass Filter",
+  chorus: "Chorus",
+  phaser: "Phaser",
+  bitcrusher: "Bitcrusher",
+  duck: "Sidechain Duck",
+  flanger: "Flanger",
+  tremolo: "Tremolo",
+};
+
+// mpumpit green (--green #57c98a) for the visualizations.
+const COL = "var(--green)";
+const DIM = "rgba(87,201,138,0.18)";
+const FILL = "rgba(87,201,138,0.12)";
+const TXT = "rgba(87,201,138,0.5)";
+
+function EffectVis({ name, params }: { name: EffectName; params: Record<string, number | boolean | string> }) {
+  const w = 200, h = 60;
+  const bg = <rect x={0} y={0} width={w} height={h} fill="rgba(0,0,0,0.3)" rx={4} />;
+
+  switch (name) {
+    case "duck": {
+      const depth = params.depth as number, release = params.release as number;
+      const topY = h * 0.1, bottomY = h * (0.1 + depth * 0.8);
+      const ax = w * 0.08, relW = 0.2 + (release - 0.01) / 0.29 * 0.7;
+      const rx = ax + w * relW;
+      const d = `M0,${topY} L${ax},${bottomY} Q${(ax + rx) / 2},${bottomY} ${rx},${topY} L${w},${topY}`;
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={0} y1={topY} x2={w} y2={topY} stroke={DIM} strokeWidth={1} strokeDasharray="3,3" />
+        <path d={d} fill={FILL} stroke={COL} strokeWidth={2} />
+        <circle cx={ax} cy={bottomY} r={3} fill={COL} />
+        <text x={ax} y={h - 2} fill={TXT} fontSize={8} textAnchor="middle">kick</text>
+      </svg>;
+    }
+    case "delay": {
+      const fb = params.feedback as number, mix = params.mix as number;
+      const taps = 5;
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        {Array.from({ length: taps }, (_, i) => {
+          const x = 20 + i * 38, amp = mix * Math.pow(fb, i);
+          const barH = amp * h * 0.8;
+          return <rect key={i} x={x} y={h - barH - 4} width={8} height={barH} rx={2} fill={COL} opacity={0.3 + amp * 0.7} />;
+        })}
+        <text x={w / 2} y={h - 2} fill={TXT} fontSize={7} textAnchor="middle">echo taps</text>
+      </svg>;
+    }
+    case "reverb": {
+      const decay = params.decay as number, mix = params.mix as number;
+      const decayW = 0.3 + (decay - 0.5) / 4.5 * 0.6;
+      const pts = Array.from({ length: 30 }, (_, i) => {
+        const t = i / 29;
+        const env = Math.exp(-t / decayW) * mix;
+        return `${10 + t * (w - 20)},${h * 0.1 + (1 - env) * h * 0.75}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+        <line x1={10} y1={h * 0.1} x2={10} y2={h * 0.85} stroke={DIM} strokeWidth={1} />
+        <text x={w / 2} y={h - 2} fill={TXT} fontSize={7} textAnchor="middle">decay</text>
+      </svg>;
+    }
+    case "compressor": {
+      const thresh = params.threshold as number, ratio = params.ratio as number;
+      const threshN = 1 + thresh / 60; // 0-1 normalized (-60 to 0)
+      const pts: string[] = [];
+      for (let i = 0; i <= 20; i++) {
+        const inp = i / 20;
+        const out = inp <= threshN ? inp : threshN + (inp - threshN) / ratio;
+        pts.push(`${10 + inp * (w - 20)},${h * 0.9 - out * h * 0.8}`);
+      }
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={10} y1={h * 0.9} x2={w - 10} y2={h * 0.1} stroke={DIM} strokeWidth={1} strokeDasharray="3,3" />
+        <polyline points={pts.join(" ")} fill="none" stroke={COL} strokeWidth={2} />
+        <line x1={10 + threshN * (w - 20)} y1={h * 0.05} x2={10 + threshN * (w - 20)} y2={h * 0.95} stroke="rgba(216,71,58,0.5)" strokeWidth={1} strokeDasharray="2,2" />
+        <text x={w / 2} y={h - 2} fill={TXT} fontSize={7} textAnchor="middle">threshold</text>
+      </svg>;
+    }
+    case "distortion": {
+      const drive = params.drive as number;
+      const k = drive / 100;
+      const pts = Array.from({ length: 40 }, (_, i) => {
+        const x = (i / 39) * 2 - 1; // -1 to 1
+        const y = k > 0 ? Math.tanh(x * (1 + k * 5)) : x;
+        return `${10 + (i / 39) * (w - 20)},${h / 2 - y * h * 0.35}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={10} y1={h / 2} x2={w - 10} y2={h / 2} stroke={DIM} strokeWidth={1} />
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+      </svg>;
+    }
+    case "highpass": {
+      const cutoff = params.cutoff as number, q = params.q as number;
+      const cutN = (cutoff - 20) / 1980;
+      const pts = Array.from({ length: 40 }, (_, i) => {
+        const f = i / 39;
+        let gain = f < cutN ? Math.pow(f / Math.max(cutN, 0.01), 2) : 1;
+        if (q > 1 && Math.abs(f - cutN) < 0.15) gain *= 1 + (q - 1) * 0.15 * (1 - Math.abs(f - cutN) / 0.15);
+        return `${10 + f * (w - 20)},${h * 0.9 - gain * h * 0.75}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+        <line x1={10 + cutN * (w - 20)} y1={h * 0.05} x2={10 + cutN * (w - 20)} y2={h * 0.95} stroke="rgba(216,71,58,0.5)" strokeWidth={1} strokeDasharray="2,2" />
+      </svg>;
+    }
+    case "chorus":
+    case "phaser": {
+      const rate = params.rate as number, depth = params.depth as number;
+      const maxRate = name === "chorus" ? 10 : 5;
+      const cycles = 1 + (rate / maxRate) * 3;
+      const amp = name === "chorus" ? Math.min(depth / 0.01, 1) : Math.min(depth / 3000, 1);
+      const pts = Array.from({ length: 60 }, (_, i) => {
+        const t = i / 59;
+        const y = Math.sin(t * Math.PI * 2 * cycles) * amp;
+        return `${10 + t * (w - 20)},${h / 2 - y * h * 0.35}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={10} y1={h / 2} x2={w - 10} y2={h / 2} stroke={DIM} strokeWidth={1} />
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+        <text x={w / 2} y={h - 2} fill={TXT} fontSize={7} textAnchor="middle">LFO</text>
+      </svg>;
+    }
+    case "bitcrusher": {
+      const bits = params.bits as number;
+      const levels = Math.pow(2, bits);
+      const pts = Array.from({ length: 60 }, (_, i) => {
+        const t = i / 59;
+        const sine = Math.sin(t * Math.PI * 4);
+        const crushed = Math.round(sine * levels / 2) / (levels / 2);
+        return `${10 + t * (w - 20)},${h / 2 - crushed * h * 0.35}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={10} y1={h / 2} x2={w - 10} y2={h / 2} stroke={DIM} strokeWidth={1} />
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+      </svg>;
+    }
+    case "flanger": {
+      // Flanger: sine wave with comb-filter notches (feedback creates resonance)
+      const rate = params.rate as number, depth = params.depth as number, fb = params.feedback as number;
+      const pts = Array.from({ length: 60 }, (_, i) => {
+        const t = i / 59;
+        const lfo = Math.sin(t * Math.PI * 2 * (1 + rate)) * depth;
+        const comb = 1 - fb * 0.5 * Math.sin(t * Math.PI * 20); // comb notch pattern
+        const y = (lfo * 0.4 + comb * 0.6);
+        return `${10 + t * (w - 20)},${h / 2 - y * h * 0.35}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={10} y1={h / 2} x2={w - 10} y2={h / 2} stroke={DIM} strokeWidth={1} />
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+        <text x={w / 2} y={h - 2} fill={TXT} fontSize={7} textAnchor="middle">sweep</text>
+      </svg>;
+    }
+    case "tremolo": {
+      // Tremolo: amplitude modulation wave
+      const rate = params.rate as number, depth = params.depth as number;
+      const shape = params.shape as string;
+      const cycles = Math.max(1, rate / 2);
+      const pts = Array.from({ length: 60 }, (_, i) => {
+        const t = i / 59;
+        const phase = (t * cycles) % 1;
+        let mod;
+        if (shape === "square") { mod = phase < 0.5 ? 1 : 1 - depth; }
+        else { mod = 1 - depth * 0.5 + Math.sin(t * cycles * Math.PI * 2) * depth * 0.5; }
+        return `${10 + t * (w - 20)},${h * 0.9 - mod * h * 0.75}`;
+      }).join(" ");
+      return <svg className="fx-vis" viewBox={`0 0 ${w} ${h}`}>{bg}
+        <line x1={10} y1={h * 0.9} x2={w - 10} y2={h * 0.15} stroke={DIM} strokeWidth={1} strokeDasharray="3,3" />
+        <polyline points={pts} fill="none" stroke={COL} strokeWidth={2} />
+        <text x={w / 2} y={h - 2} fill={TXT} fontSize={7} textAnchor="middle">amplitude</text>
+      </svg>;
+    }
+    default:
+      return null;
+  }
+}
+
+/** A small segmented toggle button (FREE/SYNC, EXCL., reverb/tremolo type). */
+function SegBtn({ active, disabled, title, onClick, children }: {
+  active: boolean; disabled?: boolean; title?: string; onClick: () => void; children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`fx-editor-btn${active ? " active" : ""}`}
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
+    >{children}</button>
+  );
+}
+
+export function EffectEditor({ name, params, onUpdate, onClose, onReset, drumsInFx = true }: Props) {
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [onClose]);
+
+  const sliders = EFFECT_SLIDERS[name];
+  const p = params as Record<string, number | boolean | string>;
+
+  const excludeRow = (keys: ReadonlyArray<readonly [string, string]>) => (
+    <div className="fx-editor-row fx-editor-seg">
+      {keys.map(([key, label]) => {
+        const disabled = key === "excludeDrums" && !drumsInFx;
+        return (
+          <SegBtn
+            key={key}
+            active={!!p[key]}
+            disabled={disabled}
+            title={disabled ? "Drums aren't routed through FX — enable Drums → FX first" : undefined}
+            onClick={() => onUpdate({ [key]: !p[key] })}
+          >EXCL. {label}</SegBtn>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div className="fx-editor-overlay" onClick={onClose}>
+      <div className="fx-editor" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${EFFECT_NAMES[name]} settings`}>
+        <div className="fx-editor-header">
+          <span className="fx-editor-title">{EFFECT_NAMES[name]}</span>
+          <button type="button" className="fx-editor-close" aria-label="Close" onClick={onClose}>✕</button>
+        </div>
+
+        {/* Delay: sync/free toggle + division selector + channel exclusion */}
+        {name === "delay" && (
+          <>
+            <div className="fx-editor-row fx-editor-seg">
+              <SegBtn active={!p.sync} onClick={() => onUpdate({ sync: false })}>FREE</SegBtn>
+              <SegBtn active={!!p.sync} onClick={() => onUpdate({ sync: true })}>SYNC</SegBtn>
+              {p.sync && (
+                <select
+                  className="fx-editor-select"
+                  value={p.division as string}
+                  onChange={(e) => onUpdate({ division: e.target.value })}
+                >
+                  {DELAY_DIVISIONS.map((d) => (
+                    <option key={d} value={d}>{d === "1/8d" ? "1/8 dotted" : d}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            {excludeRow([["excludeDrums", "DRUMS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
+          </>
+        )}
+
+        {/* Duck: exclude channels from being ducked (no drums — the kick triggers it) */}
+        {name === "duck" && excludeRow([["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
+
+        {/* Reverb: type selector (room/hall/plate/spring) */}
+        {name === "reverb" && (
+          <div className="fx-editor-row fx-editor-seg">
+            {(["room", "hall", "plate", "spring"] as const).map((t) => (
+              <SegBtn key={t} active={(p.type || "room") === t} onClick={() => onUpdate({ type: t })}>{t.toUpperCase()}</SegBtn>
+            ))}
+          </div>
+        )}
+
+        {/* Channel exclusion — all effects except delay (has its own above) and duck (no drums) */}
+        {name !== "delay" && name !== "duck" && excludeRow([["excludeDrums", "DRUMS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
+
+        {/* Tremolo: shape selector */}
+        {name === "tremolo" && (
+          <div className="fx-editor-row fx-editor-seg">
+            {(["sine", "square"] as const).map((s) => (
+              <SegBtn key={s} active={(p.shape || "sine") === s} onClick={() => onUpdate({ shape: s })}>{s === "sine" ? "SMOOTH" : "HARD"}</SegBtn>
+            ))}
+          </div>
+        )}
+
+        {/* Effect visualization */}
+        <EffectVis name={name} params={p} />
+
+        {sliders.map((s) => {
+          // Hide the Time slider when delay is synced (division drives the time).
+          if (name === "delay" && s.key === "time" && p.sync) return null;
+          const val = (p[s.key] as number) ?? s.def ?? s.min;
+          return (
+            <div className="fx-editor-row" key={s.key}>
+              <span className="fx-editor-label">{s.label}</span>
+              <input
+                type="range"
+                className="fx-editor-slider"
+                aria-label={s.label}
+                min={s.min}
+                max={s.max}
+                step={s.step}
+                value={val}
+                onChange={(e) => onUpdate({ [s.key]: parseFloat(e.target.value) })}
+              />
+              <span className="fx-editor-value">
+                {val < 1 && val > 0 ? val.toFixed(s.step < 0.01 ? 3 : 2) : Math.round(val * 10) / 10}
+                {s.unit ? ` ${s.unit}` : ""}
+              </span>
+            </div>
+          );
+        })}
+
+        <button type="button" className="fx-editor-reset" onClick={onReset}>Reset effect</button>
+      </div>
+    </div>
+  );
+}

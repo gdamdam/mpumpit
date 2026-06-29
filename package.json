@@ -1,7 +1,7 @@
 {
   "name": "mpumpit",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Companion MIDI sound module for midip — plays mpump's AGPL audio engine from any Web MIDI input.",
   "license": "AGPL-3.0-only",
   "type": "module",

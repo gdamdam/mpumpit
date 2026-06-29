@@ -1,14 +1,15 @@
 // FX editor: a reorderable MASTER effect chain (mpump's real model) and a
-// fixed per-part channel strip. Progressive disclosure keeps it performable.
-// Original work — AGPL-3.0-only.
+// fixed per-part channel strip. Per-effect editing opens a modal (EffectEditor)
+// matching mpump, with an SVG visualization. Original work — AGPL-3.0-only.
 
 import { useState } from "react";
 import type { SoundModule } from "../../sound/SoundModule";
 import type { FxTarget, FxChainItem } from "../../sound/types";
-import { type EffectName, DEFAULT_EFFECTS } from "../../engine/types";
+import type { EffectName, EffectParams } from "../../engine/types";
 import type { Part } from "../../midi/types";
-import { FX_META, WET_LABEL } from "../fxMeta";
+import { FX_META } from "../fxMeta";
 import { Slider, Select, Toggle } from "./Controls";
+import { EffectEditor } from "./EffectEditor";
 
 const GATE_RATES = ["1/4", "1/8", "1/16", "1/32"];
 const GATE_SHAPES = ["sine", "square"];
@@ -21,7 +22,7 @@ export function FxPanel(props: { sm: SoundModule; target: FxTarget; onChange: ()
 // ── Master chain ─────────────────────────────────────────────────────────────
 
 function MasterFx({ sm, onChange }: { sm: SoundModule; target: FxTarget; onChange: () => void }) {
-  const [open, setOpen] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const chain = sm.getEffectChain("master");
 
   const move = (index: number, dir: -1 | 1) => {
@@ -35,6 +36,10 @@ function MasterFx({ sm, onChange }: { sm: SoundModule; target: FxTarget; onChang
     onChange();
   };
 
+  // Recomputed from the fresh chain each render, so the open modal always shows
+  // live param values (onUpdate → onChange → re-render → new params).
+  const editItem = editing ? chain.items.find((i) => i.id === editing) ?? null : null;
+
   return (
     <div className="fx">
       <div className="fx-hint">Master FX chain · signal flows top → bottom</div>
@@ -42,38 +47,38 @@ function MasterFx({ sm, onChange }: { sm: SoundModule; target: FxTarget; onChang
         <FxRow
           key={item.id}
           item={item}
-          index={i}
-          expanded={open === item.id}
-          onToggleOpen={() => setOpen(open === item.id ? null : item.id)}
           onEnable={(on) => { sm.setEffectEnabled("master", item.id, on); onChange(); }}
-          onParam={(p, v) => { sm.setEffectParameter("master", item.id, p, v); onChange(); }}
-          onReset={() => { sm.resetEffect("master", item.id); onChange(); }}
+          onEdit={() => setEditing(item.id)}
           onMove={item.reorderable ? (dir) => move(i, dir) : undefined}
         />
       ))}
       <button type="button" className="fx-reset-all" onClick={() => { sm.resetAllEffects(); onChange(); }}>
         Reset all FX
       </button>
+      {editItem && (
+        <EffectEditor
+          name={editItem.id as EffectName}
+          params={editItem.params as EffectParams[EffectName]}
+          onUpdate={(patch) => {
+            for (const [k, v] of Object.entries(patch)) sm.setEffectParameter("master", editItem.id, k, v);
+            onChange();
+          }}
+          onReset={() => { sm.resetEffect("master", editItem.id); onChange(); }}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
 
 function FxRow(props: {
   item: FxChainItem;
-  index: number;
-  expanded: boolean;
-  onToggleOpen: () => void;
   onEnable: (on: boolean) => void;
-  onParam: (param: string, value: unknown) => void;
-  onReset: () => void;
+  onEdit: () => void;
   onMove?: (dir: -1 | 1) => void;
 }) {
-  const { item, expanded } = props;
+  const { item } = props;
   const meta = FX_META[item.id as EffectName];
-  const p = item.params as Record<string, unknown>;
-  // Truthful display fallback: the effect's real default, then the meta default,
-  // then the slider minimum — never a hardcoded guess that diverges from the engine.
-  const def = DEFAULT_EFFECTS[item.id as EffectName] as Record<string, unknown> | undefined;
 
   return (
     <div className={`fx-row${item.enabled ? " is-on" : ""}`}>
@@ -89,62 +94,8 @@ function FxRow(props: {
             <button type="button" onClick={() => props.onMove!(1)} aria-label="Move down" title="Move later">▼</button>
           </span>
         )}
-        <button type="button" className="fx-expand" aria-expanded={expanded} onClick={props.onToggleOpen}>
-          {expanded ? "Hide" : "Edit"}
-        </button>
+        <button type="button" className="fx-expand" onClick={props.onEdit}>Edit</button>
       </div>
-      {expanded && (
-        <div className="fx-row-body">
-          {meta.toggles?.map((t) => (
-            <Toggle key={t.key} label={t.label} on={!!p[t.key]} onChange={(on) => props.onParam(t.key, on)} />
-          ))}
-          {meta.selects?.map((s) => (
-            <Select key={s.key} label={s.label} value={String(p[s.key] ?? s.options[0])}
-              options={s.options} onChange={(v) => props.onParam(s.key, v)} />
-          ))}
-          {meta.params.map((pm) => (
-            <Slider key={pm.key} label={pm.label} min={pm.min} max={pm.max} step={pm.step}
-              value={Number(p[pm.key] ?? def?.[pm.key] ?? pm.def ?? pm.min)} onChange={(v) => props.onParam(pm.key, v)}
-              format={(v) => fmt(v, pm.step)} />
-          ))}
-          {meta.wet && (
-            <Slider label={WET_LABEL} min={0} max={1} step={0.01}
-              value={Number(p[meta.wet] ?? def?.[meta.wet] ?? 0.3)} onChange={(v) => props.onParam(meta.wet!, v)}
-              format={(v) => `${Math.round(v * 100)}%`} />
-          )}
-          <ExcludeToggles params={p} onParam={props.onParam} hasDrums={item.id !== "duck"} />
-          <button type="button" className="fx-reset" onClick={props.onReset}>Reset</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ExcludeToggles(props: {
-  params: Record<string, unknown>;
-  onParam: (param: string, value: unknown) => void;
-  hasDrums: boolean;
-}) {
-  const { params, onParam, hasDrums } = props;
-  // mpump models per-part FX participation as exclusion flags on each master
-  // effect — so "applies to" toggles are the honest per-part FX control.
-  const row: Array<[string, Part]> = [
-    ...(hasDrums ? ([["excludeDrums", "drums"]] as Array<[string, Part]>) : []),
-    ["excludeBass", "bass"],
-    ["excludeSynth", "synth"],
-  ];
-  return (
-    <div className="fx-excl">
-      <span className="ctl-label">Applies to</span>
-      {row.map(([key, part]) => (
-        <Toggle
-          key={key}
-          label={part}
-          on={!params[key]} // toggle shows inclusion; excluded => off
-          onChange={(included) => onParam(key, !included)}
-          title={`${part} ${params[key] ? "excluded from" : "sent through"} this effect`}
-        />
-      ))}
     </div>
   );
 }
@@ -224,12 +175,6 @@ function PartStrip({ sm, part, onChange }: { sm: SoundModule; part: Part; onChan
 
 // ── formatting ───────────────────────────────────────────────────────────────
 
-function fmt(v: number, step: number): string {
-  if (step >= 1) return String(Math.round(v));
-  if (step >= 0.1) return v.toFixed(1);
-  if (step >= 0.01) return v.toFixed(2);
-  return v.toFixed(4);
-}
 function dB(v: number): string { return `${v > 0 ? "+" : ""}${v.toFixed(1)}dB`; }
 function panFmt(v: number): string {
   if (Math.abs(v) < 0.025) return "C";

@@ -3,6 +3,17 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-06-29
+
+### Changed
+- **FX editing is now a modal**, matching mpump's EffectEditor. Clicking *Edit*
+  on a master-chain effect opens an overlay with a per-effect **SVG
+  visualization** (echo taps, reverb decay tail, compressor knee, distortion
+  curve, filter slope, LFO/sweep, bit-crush staircase, sidechain envelope…),
+  mpump's exact controls (FREE/SYNC + division select, room/hall/plate/spring,
+  SMOOTH/HARD, EXCL. DRUMS/BASS/SYNTH buttons), the Time slider hidden when
+  synced, and ESC / click-outside to close. Replaces the inline expanding panel.
+
 ## [1.0.2] — 2026-06-29
 
 ### Added
