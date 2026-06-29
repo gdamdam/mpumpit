@@ -1,15 +1,12 @@
 <div align="center">
-
-```
+<pre>
 █▀▄▀█ █▀█ █ █ █▀▄▀█ █▀█ ▀█▀ ▀█▀
 █ ▀ █ █▀▀ ▀▄▀ █ ▀ █ █▀▀ ▄█▄  █
-```
+</pre>
 
 ### a browser MIDI sound module
 
 **Plug a sequencer in. Get sound out.**
-
-[![live demo](https://img.shields.io/badge/▶_live_demo-gdamdam.github.io%2Fmpumpit-e0a23c?style=for-the-badge)](https://gdamdam.github.io/mpumpit/)
 
 [![CI](https://github.com/gdamdam/mpumpit/actions/workflows/ci.yml/badge.svg)](https://github.com/gdamdam/mpumpit/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-4c8bf5)](./LICENSE)
