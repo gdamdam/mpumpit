@@ -1,5 +1,7 @@
 <div align="center">
 
+![mpumpit screenshot](./mpumpit_screenshot.gif)
+
 # mpumpit
 
 ### a browser MIDI sound module
