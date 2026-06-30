@@ -288,8 +288,9 @@ export function App({ createEngine }: AppProps = {}) {
     <div className="face">
       <div className="face-top">
         <div className="brand">
-          <pre className="brand-logo" aria-label="mpumpit">{`█▀▄▀█ █▀█ █ █ █▀▄▀█ █▀█ ▀█▀ ▀█▀
-█ ▀ █ █▀▀ ▀▄▀ █ ▀ █ █▀▀ ▄█▄  █ `}</pre>
+          <pre className="brand-logo" aria-label="mpumpit">{`┏┳┓┏━┓╻ ╻┏┳┓┏━┓╻╺┳╸
+┃┃┃┣━┛┃ ┃┃┃┃┣━┛┃ ┃
+╹ ╹╹  ┗━┛╹ ╹╹  ╹ ╹`}</pre>
           <span className="brand-sub">MIDI sound module · v{__APP_VERSION__}</span>
         </div>
         <div className="bpm">
