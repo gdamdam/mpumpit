@@ -3,7 +3,25 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [1.2.0] — 2026-06-29
+## [1.2.1] — 2026-06-30
+
+### Fixed
+- **Drums obey MASTER volume when *Drums → FX* is off.** With *Drums → FX*
+  disabled, drums bypassed the FX chain by joining at the drive stage — *after*
+  the master-volume node — so the MASTER fader had no effect on them. The drums
+  bypass gain now tracks master volume (kept in sync on every volume change and
+  the resume heartbeat), so drums respond to MASTER in both routings.
+- **Persisted synth params are fully validated.** Loaded `SynthParams` were
+  shape-cast without checking field values; a hand-edited or corrupt save could
+  push out-of-range numbers or unknown enum values straight to the engine. Every
+  field is now range-clamped (numbers) or enum/type-checked, defaulting
+  individually, so the engine always receives a complete, valid param set.
+- **Malformed user presets are normalized instead of trusted.** Saved synth/bass
+  presets now have their params validated, and drum-kit presets with missing or
+  non-object `voices` default to an empty set (loading as an all-default kit)
+  rather than crashing kit selection. Presets without a string name are dropped.
+
+
 
 ### Fixed
 - **Master effects now reach drums.** Drums were hardcoded to bypass the entire

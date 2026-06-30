@@ -289,9 +289,12 @@ export class AudioPort {
     this.defaultGroupBus.connect(this.master);
     this.master.connect(this.fxOutput);
 
-    // MB bypass nodes: skip FX+EQ+MB, connect directly to driveGain
+    // MB bypass nodes: skip FX+EQ+MB, connect directly to driveGain. The bypass
+    // joins the chain at driveGain — AFTER `this.master` (the master-volume node),
+    // so its gain mirrors _masterVol (kept in sync by setVolume + the heartbeat).
+    // Without this, drums routed direct (Drums→FX off) would ignore MASTER volume.
     this.mbDrumsDirectOut = this.ctx.createGain();
-    this.mbDrumsDirectOut.gain.value = 1;
+    this.mbDrumsDirectOut.gain.value = this._masterVol;
     this.mbDrumsDirectOut.connect(this.driveGain);
 
 
@@ -330,6 +333,9 @@ export class AudioPort {
       try {
         this.master.gain.cancelScheduledValues(0);
         this.master.gain.setValueAtTime(this._masterVol, ct);
+        // Drums-direct bypass tracks master volume — flush it alongside master.
+        this.mbDrumsDirectOut?.gain.cancelScheduledValues(0);
+        this.mbDrumsDirectOut?.gain.setValueAtTime(this._masterVol, ct);
       } catch { /* */ }
       for (const [ch, bus] of this.channelBuses) {
         // Skip buses with in-flight transition ramps — cancelScheduledValues
@@ -2109,6 +2115,9 @@ export class AudioPort {
     const now = this.ctx.currentTime;
     this.master.gain.cancelScheduledValues(now);
     this.master.gain.setValueAtTime(clamped, now);
+    // Keep the drums-direct bypass (Drums→FX off) at the same level so drums
+    // obey MASTER volume even when they skip the master-volume node.
+    this.mbDrumsDirectOut?.gain.setValueAtTime(clamped, now);
   }
 
   /** Get the AnalyserNode for VU metering. */

@@ -6,7 +6,7 @@
 // and nothing here throws on bad input. Original work — AGPL-3.0-only.
 
 import type { EffectName, EffectParams, SynthParams, DrumVoiceParams } from "../engine/types";
-import { DEFAULT_EFFECTS } from "../engine/types";
+import { DEFAULT_EFFECTS, DEFAULT_SYNTH_PARAMS, LFO_DIVISIONS } from "../engine/types";
 import {
   MASTER_EFFECTS, DEFAULT_EFFECT_ORDER, DEFAULT_CHANNEL_STRIP, DEFAULT_MASTER,
   type SoundState, type PartState, type ChannelStrip, type UserPresets, type MasterSettings,
@@ -24,8 +24,100 @@ function clamp01(v: number): number {
 function numOr(v: unknown, def: number, lo: number, hi: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def;
 }
+/** A finite number rounded to an integer and clamped to [lo, hi], else the default. */
+function intOr(v: unknown, def: number, lo: number, hi: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : def;
+}
+/** A string belonging to `allowed`, else the default. */
+function enumOr<T extends string>(v: unknown, allowed: readonly T[], def: T): T {
+  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : def;
+}
+function boolOr(v: unknown, def: boolean): boolean {
+  return typeof v === "boolean" ? v : def;
+}
 
 const REORDERABLE = new Set<EffectName>(DEFAULT_EFFECT_ORDER);
+
+// Allowed enum values for SynthParams string fields. Mirror engine/types.ts;
+// kept local so normalization doesn't couple to UI metadata.
+const OSC_TYPES = ["sawtooth", "square", "sine", "triangle", "pwm", "sync", "fm", "wavetable"] as const;
+const FILTER_TYPES = ["lowpass", "highpass", "bandpass", "notch"] as const;
+const FILTER_MODELS = ["digital", "mog", "303"] as const;
+const LFO_SHAPES = ["sine", "square", "triangle", "sawtooth"] as const;
+const LFO_TARGETS = ["cutoff", "pitch", "both"] as const;
+const WAVETABLES = ["basic", "vocal", "metallic", "pad", "organ"] as const;
+
+/**
+ * Fully validate persisted/user-supplied SynthParams. Every REQUIRED field is
+ * range-clamped (numbers) or enum/type-checked, defaulting from
+ * DEFAULT_SYNTH_PARAMS individually so the result is always a complete, valid
+ * param set the engine can apply directly. OPTIONAL fields are validated only
+ * when present (kept absent otherwise, so the engine applies its own default).
+ * Ranges follow the engine's documented bounds in engine/types.ts. Never throws.
+ */
+export function normalizeSynthParams(raw: unknown): SynthParams {
+  const d = DEFAULT_SYNTH_PARAMS;
+  if (!isObj(raw)) return { ...d };
+  const out: SynthParams = {
+    oscType: enumOr(raw.oscType, OSC_TYPES, d.oscType),
+    attack: numOr(raw.attack, d.attack, 0.001, 2),
+    decay: numOr(raw.decay, d.decay, 0.01, 2),
+    sustain: numOr(raw.sustain, d.sustain, 0, 1),
+    release: numOr(raw.release, d.release, 0.01, 3),
+    filterOn: boolOr(raw.filterOn, d.filterOn),
+    filterType: enumOr(raw.filterType, FILTER_TYPES, d.filterType),
+    cutoff: numOr(raw.cutoff, d.cutoff, 100, 8000),
+    resonance: numOr(raw.resonance, d.resonance, 0.5, 20),
+    subOsc: boolOr(raw.subOsc, d.subOsc),
+    subLevel: numOr(raw.subLevel, d.subLevel, 0, 1),
+    detune: numOr(raw.detune, d.detune, -50, 50),
+    lfoOn: boolOr(raw.lfoOn, d.lfoOn),
+    lfoSync: boolOr(raw.lfoSync, d.lfoSync),
+    lfoRate: numOr(raw.lfoRate, d.lfoRate, 0.1, 20),
+    lfoDivision: enumOr(raw.lfoDivision, LFO_DIVISIONS, d.lfoDivision),
+    lfoDepth: numOr(raw.lfoDepth, d.lfoDepth, 0, 1),
+    lfoShape: enumOr(raw.lfoShape, LFO_SHAPES, d.lfoShape),
+    lfoTarget: enumOr(raw.lfoTarget, LFO_TARGETS, d.lfoTarget),
+  };
+  // Optional fields: validate only when present so absence keeps engine defaults.
+  if ("filterEnvDepth" in raw) out.filterEnvDepth = numOr(raw.filterEnvDepth, 0, 0, 1);
+  if ("filterDecay" in raw) out.filterDecay = numOr(raw.filterDecay, 0, 0, 2);
+  if ("filterDrive" in raw) out.filterDrive = numOr(raw.filterDrive, 0, 0, 1);
+  if ("syncRatio" in raw) out.syncRatio = numOr(raw.syncRatio, 2, 1, 16);
+  if ("fmRatio" in raw) out.fmRatio = numOr(raw.fmRatio, 2, 0.5, 16);
+  if ("fmIndex" in raw) out.fmIndex = intOr(raw.fmIndex, 5, 0, 100);
+  if ("wavetablePos" in raw) out.wavetablePos = numOr(raw.wavetablePos, 0.5, 0, 1);
+  if ("unison" in raw) out.unison = intOr(raw.unison, 1, 1, 7);
+  if ("unisonSpread" in raw) out.unisonSpread = numOr(raw.unisonSpread, 0, 0, 50);
+  if ("noteLength" in raw) out.noteLength = intOr(raw.noteLength, 1, 1, 64);
+  if ("gain" in raw) out.gain = numOr(raw.gain, 1, 0.5, 2);
+  // Optional enums: keep only a valid value; drop anything else (engine defaults).
+  if (typeof raw.filterModel === "string" && (FILTER_MODELS as readonly string[]).includes(raw.filterModel))
+    out.filterModel = raw.filterModel as SynthParams["filterModel"];
+  if (typeof raw.wavetable === "string" && (WAVETABLES as readonly string[]).includes(raw.wavetable))
+    out.wavetable = raw.wavetable;
+  return out;
+}
+
+/** Validate one drum voice: required tune/decay/level always set (clamped or
+ *  defaulted); optional fields validated only when present. Unknown keys are
+ *  dropped so no garbage reaches the engine. */
+function normalizeDrumVoice(raw: Record<string, unknown>): DrumVoiceParams {
+  const out: DrumVoiceParams = {
+    tune: numOr(raw.tune, 0, -24, 24),
+    decay: numOr(raw.decay, 1.0, 0.2, 3.0),
+    level: numOr(raw.level, 1.0, 0, 1),
+  };
+  if ("click" in raw) out.click = numOr(raw.click, 0.15, 0, 1);
+  if ("sweepDepth" in raw) out.sweepDepth = numOr(raw.sweepDepth, 0.5, 0, 1);
+  if ("sweepRate" in raw) out.sweepRate = numOr(raw.sweepRate, 0.5, 0, 1);
+  if ("noiseMix" in raw) out.noiseMix = numOr(raw.noiseMix, 0.55, 0, 1);
+  if ("color" in raw) out.color = numOr(raw.color, 0, -1, 1);
+  if ("clickTune" in raw) out.clickTune = numOr(raw.clickTune, 0, -1, 1);
+  if ("filterCutoff" in raw) out.filterCutoff = numOr(raw.filterCutoff, 1, 0, 1);
+  if ("pan" in raw) out.pan = numOr(raw.pan, 0, -1, 1);
+  return out;
+}
 
 /** Per-effect params: start from the default, copy only valid FLAT primitive
  *  values (drop nested/null garbage that would crash FX rendering), force `on`
@@ -92,7 +184,7 @@ function normalizeVoices(raw: Record<string, unknown>): Record<number, DrumVoice
   const out: Record<number, DrumVoiceParams> = {};
   for (const [k, v] of Object.entries(raw)) {
     const note = Number(k);
-    if (Number.isInteger(note) && note >= 0 && note <= 127 && isObj(v)) out[note] = v as unknown as DrumVoiceParams;
+    if (Number.isInteger(note) && note >= 0 && note <= 127 && isObj(v)) out[note] = normalizeDrumVoice(v);
   }
   return out;
 }
@@ -103,7 +195,7 @@ function normalizePart(raw: unknown): Partial<PartState> | undefined {
   if (typeof raw.preset === "string") out.preset = raw.preset;
   if (typeof raw.volume === "number" && Number.isFinite(raw.volume)) out.volume = clamp01(raw.volume);
   if (isObj(raw.strip)) out.strip = normalizeStrip(raw.strip);
-  if (isObj(raw.params)) out.params = raw.params as unknown as SynthParams; // shape-checked; hydrate() backfills if dropped
+  if (isObj(raw.params)) out.params = normalizeSynthParams(raw.params); // fully validated; hydrate() backfills if the field is absent
   if (isObj(raw.voices)) out.voices = normalizeVoices(raw.voices);
   return out;
 }
@@ -142,14 +234,44 @@ function normalizeMaster(raw: unknown): MasterSettings {
   };
 }
 
+/** Synth/bass user presets: a preset MUST have a string name (else rejected);
+ *  its params are fully validated/defaulted so a malformed user preset can't
+ *  send garbage to the engine when selected. genres/group kept only if strings. */
+function normalizeSynthPresets(raw: unknown): SynthPreset[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SynthPreset[] = [];
+  for (const p of raw) {
+    if (!isObj(p) || typeof p.name !== "string") continue;
+    const preset: SynthPreset = { name: p.name, params: normalizeSynthParams(p.params) };
+    if (typeof p.genres === "string") preset.genres = p.genres;
+    if (typeof p.group === "string") preset.group = p.group;
+    out.push(preset);
+  }
+  return out;
+}
+
+/** Drum-kit user presets: a preset MUST have a string name (else rejected).
+ *  Missing/garbage `voices` becomes {} — kitVoices() then fills every drum note
+ *  with defaults, so a voiceless kit loads as an all-default kit instead of
+ *  crashing on `kit.voices[note]`. Present voices are field-validated. */
+function normalizeDrumKitPresets(raw: unknown): DrumKitPreset[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DrumKitPreset[] = [];
+  for (const p of raw) {
+    if (!isObj(p) || typeof p.name !== "string") continue;
+    const preset: DrumKitPreset = { name: p.name, voices: isObj(p.voices) ? normalizeVoices(p.voices) : {} };
+    if (typeof p.genres === "string") preset.genres = p.genres;
+    out.push(preset);
+  }
+  return out;
+}
+
 function normalizeUserPresets(raw: unknown): UserPresets {
-  const pick = (v: unknown) =>
-    Array.isArray(v) ? v.filter((p) => isObj(p) && typeof (p as { name?: unknown }).name === "string") : [];
   if (!isObj(raw)) return { synth: [], bass: [], drums: [] };
   return {
-    synth: pick(raw.synth) as SynthPreset[],
-    bass: pick(raw.bass) as SynthPreset[],
-    drums: pick(raw.drums) as DrumKitPreset[],
+    synth: normalizeSynthPresets(raw.synth),
+    bass: normalizeSynthPresets(raw.bass),
+    drums: normalizeDrumKitPresets(raw.drums),
   };
 }
 
