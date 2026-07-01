@@ -9,6 +9,7 @@
 import { useEffect, type ReactNode } from "react";
 import type { EffectName, EffectParams } from "../../engine/types";
 import { DELAY_DIVISIONS } from "../../engine/types";
+import { Dropdown } from "./Dropdown";
 
 interface Props {
   name: EffectName;
@@ -319,15 +320,13 @@ export function EffectEditor({ name, params, onUpdate, onClose, onReset, drumsIn
               <SegBtn active={!p.sync} onClick={() => onUpdate({ sync: false })}>FREE</SegBtn>
               <SegBtn active={!!p.sync} onClick={() => onUpdate({ sync: true })}>SYNC</SegBtn>
               {p.sync && (
-                <select
+                <Dropdown
                   className="fx-editor-select"
                   value={p.division as string}
-                  onChange={(e) => onUpdate({ division: e.target.value })}
-                >
-                  {DELAY_DIVISIONS.map((d) => (
-                    <option key={d} value={d}>{d === "1/8d" ? "1/8 dotted" : d}</option>
-                  ))}
-                </select>
+                  options={DELAY_DIVISIONS.map((d) => ({ value: d, label: d === "1/8d" ? "1/8 dotted" : d }))}
+                  onChange={(v) => onUpdate({ division: v })}
+                  ariaLabel="delay division"
+                />
               )}
             </div>
             {excludeRow([["excludeDrums", "DRUMS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}

@@ -5,6 +5,7 @@ import type { SoundModule } from "../../sound/SoundModule";
 import type { Part } from "../../midi/types";
 import { SynthEditor } from "../components/SynthEditor";
 import { DrumEditor } from "../components/DrumEditor";
+import { Dropdown, type DropdownGroup } from "../components/Dropdown";
 
 export function EditorView(props: {
   sm: SoundModule;
@@ -36,18 +37,19 @@ export function EditorView(props: {
         <button type="button" className="editor-back" onClick={onBack}>← Back</button>
         <span className="editor-title">{part.toUpperCase()} editor</span>
         <span className="editor-spacer" />
-        <label className="editor-preset" title="Preset">
-          <select value={preset} onChange={(e) => selectPreset(e.target.value)} aria-label={`${part} preset`}>
-            <optgroup label="Presets">
-              {builtinNames.map((n) => <option key={n} value={n}>{n}</option>)}
-            </optgroup>
-            {userNames.length > 0 && (
-              <optgroup label="User">
-                {userNames.map((n) => <option key={n} value={n}>{n}</option>)}
-              </optgroup>
-            )}
-          </select>
-        </label>
+        <span className="editor-preset" title="Preset">
+          <Dropdown
+            value={preset}
+            groups={[
+              { label: "Presets", options: builtinNames.map((n) => ({ value: n, label: n })) },
+              ...(userNames.length > 0
+                ? [{ label: "User", options: userNames.map((n) => ({ value: n, label: n })) }]
+                : []),
+            ] as DropdownGroup[]}
+            onChange={selectPreset}
+            ariaLabel={`${part} preset`}
+          />
+        </span>
         {modified && <span className="editor-mod" title="Edited since the preset was loaded">✎</span>}
         <button type="button" className="editor-btn" onClick={saveAs}>Save as…</button>
         {isUser && <button type="button" className="editor-btn" onClick={del}>Delete</button>}

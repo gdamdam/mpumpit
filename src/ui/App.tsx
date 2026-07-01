@@ -9,6 +9,7 @@ import { PARTS, type Part } from "../midi/types";
 import type { FxTarget } from "../sound/types";
 import { loadSettings, saveSettings, clearSettings } from "../state/persistence";
 import { Led, Slider, Select } from "./components/Controls";
+import { Dropdown } from "./components/Dropdown";
 import { FxPanel } from "./components/FxPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { EditorView } from "./views/EditorView";
@@ -472,9 +473,13 @@ function MidiBay(props: {
       <div className="bay">
         <span className="ctl-label">MIDI IN</span>
         <Led state={led} title={led === "active" ? "MIDI activity" : connected.length ? "connected" : "idle"} />
-        <select className="bay-select" value={selected} onChange={(e) => onSelect(e.target.value)} aria-label="MIDI input">
-          {options.map((id) => <option key={id} value={id}>{labelFor(id)}</option>)}
-        </select>
+        <Dropdown
+          className="bay-select"
+          value={selected}
+          options={options.map((id) => ({ value: id, label: labelFor(id) }))}
+          onChange={onSelect}
+          ariaLabel="MIDI input"
+        />
       </div>
     );
   } else {

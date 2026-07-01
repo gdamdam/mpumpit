@@ -3,6 +3,19 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] — 2026-06-30
+
+### Changed
+- **Dropdowns render identically on every browser and OS.** The native
+  `<select>` menus (MIDI input, per-part preset, keyboard target, delay
+  division, and the sound-editor preset picker) drew their open list with the
+  platform's own widget, so they looked different across browsers and operating
+  systems. They are replaced with a custom `Dropdown` listbox that is fully
+  CSS-styled and consistent everywhere. It keeps keyboard support (arrows,
+  Home/End, Enter/Escape, type-to-open), option grouping, and swallows key
+  events while open so the QWERTY instrument keys never fire from menu
+  navigation.
+
 ## [1.2.1] — 2026-06-30
 
 ### Fixed

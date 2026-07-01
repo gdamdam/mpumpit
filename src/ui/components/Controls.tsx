@@ -1,5 +1,6 @@
 // Small reusable instrument controls. Original work — AGPL-3.0-only.
 import { type ReactNode } from "react";
+import { Dropdown } from "./Dropdown";
 
 /** A labelled horizontal slider with a monospace readout. */
 export function Slider(props: {
@@ -42,14 +43,10 @@ export function Select(props: {
 }) {
   const { label, value, options, onChange, title, ariaLabel } = props;
   return (
-    <label className="ctl-select" title={title}>
+    <span className="ctl-select" title={title}>
       {label && <span className="ctl-label">{label}</span>}
-      <select value={value} aria-label={ariaLabel} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o} value={o}>{o}</option>
-        ))}
-      </select>
-    </label>
+      <Dropdown value={value} options={options} onChange={onChange} ariaLabel={ariaLabel} />
+    </span>
   );
 }
 
