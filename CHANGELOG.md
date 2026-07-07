@@ -3,6 +3,12 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.3] — 2026-07-07
+
+### Changed
+- Documentation polish and version bump. The README version badge, which had
+  drifted to 1.0.1, now tracks the current release.
+
 ## [1.2.2] — 2026-06-30
 
 ### Changed
