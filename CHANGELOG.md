@@ -3,6 +3,24 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.4] — 2026-07-13
+
+### Fixed
+- **Steady pump when moving a channel fader during a kick (fallback duck
+  path).** `setChannelVolume` scheduled automation (`setValueAtTime`) on the
+  same channel-bus gain that the non-worklet sidechain duck writes via direct
+  `.value` assignment — mixing the two write models on one AudioParam is
+  undefined behavior in the Web Audio spec and made the duck erratic. Volume
+  changes now use the same direct `.value` write the duck uses (still
+  cancelling any in-flight transition ramp first).
+- **CV pitch output clamps to the ±5V range.** Pitch CV for MIDI notes above
+  120 exceeded the ±1.0 float range and clipped unpredictably; it now
+  saturates cleanly at +5V (note 121 and up output exactly 1.0).
+- **CV output restores a held note on re-enable.** Disabling CV output zeroes
+  the pitch/gate offsets, but re-enabling never re-asserted them, so a note
+  held across disable/enable stayed silent until the next note-on. The last
+  gate/pitch values are now tracked and re-applied on enable.
+
 ## [1.2.3] — 2026-07-07
 
 ### Changed

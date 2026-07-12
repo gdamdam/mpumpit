@@ -1629,9 +1629,13 @@ export class AudioPort {
     }
     const bus = this.channelBuses.get(ch);
     if (bus) {
-      const now = this.ctx.currentTime;
-      bus.gain.cancelScheduledValues(now);
-      bus.gain.setValueAtTime(vol, now);
+      // Direct .value write — the fallback sidechain duck (applyDuck/duckRecover)
+      // also writes bus.gain.value on this param, and mixing .value writes with
+      // scheduled automation on one AudioParam is undefined behavior in the Web
+      // Audio spec. cancelScheduledValues only clears any in-flight transition
+      // ramp so the fader change takes effect immediately.
+      bus.gain.cancelScheduledValues(this.ctx.currentTime);
+      bus.gain.value = vol;
     }
   }
 

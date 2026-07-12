@@ -26,6 +26,10 @@ export class CVOutput {
   private merger: ChannelMergerNode;
   private masterGain: GainNode;
   private enabled = false;
+  // Last commanded pitch/gate — tracked even while disabled so re-enabling
+  // restores a currently-held note (disable zeroes both source offsets).
+  private lastPitch = 0;
+  private lastGateOn = false;
 
   constructor(ctx: AudioContext) {
     this.ctx = ctx;
@@ -58,6 +62,12 @@ export class CVOutput {
     if (!on) {
       this.pitchSource.offset.setValueAtTime(0, this.ctx.currentTime);
       this.gateSource.offset.setValueAtTime(0, this.ctx.currentTime);
+    } else {
+      // Re-assert the held note — offsets were zeroed on disable, so without
+      // this a note held across disable/enable stays silent until the next
+      // note-on.
+      this.pitchSource.offset.setValueAtTime(this.lastPitch, this.ctx.currentTime);
+      this.gateSource.offset.setValueAtTime(this.lastGateOn ? 1.0 : 0, this.ctx.currentTime);
     }
   }
 
@@ -71,10 +81,12 @@ export class CVOutput {
    * Scaled to Web Audio range: 1V ≈ 0.2 (to stay within -1..1 float range).
    */
   setPitch(midiNote: number, time?: number): void {
-    if (!this.enabled) return;
     const volts = (midiNote - 60) / 12;
-    // Scale: ±5V range maps to ±1.0 float
-    const value = volts / 5;
+    // Scale: ±5V range maps to ±1.0 float, clamped — notes above 120 would
+    // otherwise exceed the DAC range, so they saturate at +5V.
+    const value = Math.max(-1, Math.min(1, volts / 5));
+    this.lastPitch = value;
+    if (!this.enabled) return;
     const when = time !== undefined
       ? this.ctx.currentTime + Math.max(0, (time - performance.now()) / 1000)
       : this.ctx.currentTime;
@@ -83,6 +95,7 @@ export class CVOutput {
 
   /** Set gate high (note on) or low (note off). */
   setGate(on: boolean, time?: number): void {
+    this.lastGateOn = on;
     if (!this.enabled) return;
     const when = time !== undefined
       ? this.ctx.currentTime + Math.max(0, (time - performance.now()) / 1000)
