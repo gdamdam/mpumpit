@@ -76,11 +76,11 @@ export function clearSettings(): void {
 }
 
 function normalizeChannels(c: unknown): Record<Part, number> {
-  const def: Record<Part, number> = { synth: 1, bass: 2, drums: 10 };
+  const def: Record<Part, number> = { synth: 1, chords: 3, bass: 2, drums: 10 };
   if (!c || typeof c !== "object") return def;
   const obj = c as Record<string, unknown>;
   const out = { ...def };
-  for (const part of ["synth", "bass", "drums"] as Part[]) {
+  for (const part of ["synth", "chords", "bass", "drums"] as Part[]) {
     const v = obj[part];
     if (typeof v === "number" && v >= 1 && v <= 16) out[part] = Math.floor(v);
   }

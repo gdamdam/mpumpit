@@ -12,7 +12,7 @@ import {
   type SynthKnob, type SynthSelect, type SynthToggle,
 } from "../synthParamMeta";
 
-type SynthPart = "synth" | "bass";
+type SynthPart = "synth" | "chords" | "bass";
 
 function fmtFor(f?: SynthKnob["format"]): ((v: number) => string) | undefined {
   switch (f) {

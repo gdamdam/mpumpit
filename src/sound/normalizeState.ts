@@ -267,9 +267,10 @@ function normalizeDrumKitPresets(raw: unknown): DrumKitPreset[] {
 }
 
 function normalizeUserPresets(raw: unknown): UserPresets {
-  if (!isObj(raw)) return { synth: [], bass: [], drums: [] };
+  if (!isObj(raw)) return { synth: [], chords: [], bass: [], drums: [] };
   return {
     synth: normalizeSynthPresets(raw.synth),
+    chords: normalizeSynthPresets(raw.chords),
     bass: normalizeSynthPresets(raw.bass),
     drums: normalizeDrumKitPresets(raw.drums),
   };
@@ -291,7 +292,7 @@ export function normalizeSoundState(raw: unknown): Partial<SoundState> {
   if ("drumMap" in raw) out.drumMap = normalizeDrumMap(raw.drumMap);
   if (isObj(raw.parts)) {
     const parts: Record<string, Partial<PartState>> = {};
-    for (const part of ["synth", "bass", "drums"] as Part[]) {
+    for (const part of ["synth", "chords", "bass", "drums"] as Part[]) {
       const np = normalizePart((raw.parts as Record<string, unknown>)[part]);
       if (np) parts[part] = np;
     }

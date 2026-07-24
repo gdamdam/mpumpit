@@ -108,10 +108,11 @@ export function defaultSoundState(): SoundState {
     drumMap: {},
     parts: {
       synth: defaultPartState("Default"),
+      chords: defaultPartState("Default"),
       bass: defaultPartState("Default"),
       drums: defaultPartState("Default"),
     },
-    userPresets: { synth: [], bass: [], drums: [] },
+    userPresets: { synth: [], chords: [], bass: [], drums: [] },
   };
 }
 
@@ -195,7 +196,7 @@ export class SoundModule {
   // older saved state from before the editor existed) by seeding from the
   // part's named preset. Keeps already-edited params intact.
   private hydrate(): void {
-    for (const part of ["synth", "bass"] as ("synth" | "bass")[]) {
+    for (const part of ["synth", "bass", "chords"] as ("synth" | "bass" | "chords")[]) {
       if (!this.state.parts[part].params) {
         const p = this.findSynthPreset(part, this.state.parts[part].preset)
           ?? (part === "bass" ? BASS_PRESETS : SYNTH_PRESETS)[0];
@@ -453,14 +454,14 @@ export class SoundModule {
 
   // ── Presets ────────────────────────────────────────────────────────────────
 
-  private synthPresetList(part: "synth" | "bass"): SynthPreset[] {
+  private synthPresetList(part: "synth" | "bass" | "chords"): SynthPreset[] {
     const builtins = part === "bass" ? BASS_PRESETS : SYNTH_PRESETS;
     return [...builtins, ...this.state.userPresets[part]];
   }
   private drumKitList(): DrumKitPreset[] {
     return [...DRUM_KIT_PRESETS, ...this.state.userPresets.drums];
   }
-  private findSynthPreset(part: "synth" | "bass", name: string): SynthPreset | undefined {
+  private findSynthPreset(part: "synth" | "bass" | "chords", name: string): SynthPreset | undefined {
     return this.synthPresetList(part).find((p) => p.name === name);
   }
   private findKit(name: string): DrumKitPreset | undefined {
@@ -918,7 +919,7 @@ export class SoundModule {
     this.engine.setVolume(this.state.masterVolume);
     this.applyMaster();
     this.applyFx();
-    for (const part of ["synth", "bass", "drums"] as Part[]) {
+    for (const part of ["synth", "chords", "bass", "drums"] as Part[]) {
       this.applyPart(part);
       this.engine.setChannelVolume(PART_TO_AUDIO_CH[part], this.state.parts[part].volume);
     }
@@ -962,7 +963,7 @@ export class SoundModule {
   }
 
   private applyStrips(): void {
-    for (const part of ["synth", "bass", "drums"] as Part[]) {
+    for (const part of ["synth", "chords", "bass", "drums"] as Part[]) {
       // EQ first — it self-heals the channel bus, ensuring HPF/pan/gate apply.
       for (const id of this.stripEffectsFor(part)) this.applyStripSection(part, id);
     }
@@ -972,7 +973,7 @@ export class SoundModule {
   // it has loaded (drums don't use the worklet, so they're unaffected).
   private applyAfterWorklet(): void {
     if (!this.engine) return;
-    for (const part of ["synth", "bass"] as Part[]) {
+    for (const part of ["synth", "bass", "chords"] as Part[]) {
       this.applyPart(part);
       this.engine.setChannelVolume(PART_TO_AUDIO_CH[part], this.state.parts[part].volume);
       for (const id of this.stripEffectsFor(part)) this.applyStripSection(part, id);
@@ -1009,11 +1010,13 @@ function mergeState(base: SoundState, patch: Partial<SoundState>): SoundState {
     drumMap: { ...(patch.drumMap ?? base.drumMap) },
     parts: {
       synth: mergePart(base.parts.synth, patch.parts?.synth),
+      chords: mergePart(base.parts.chords, patch.parts?.chords),
       bass: mergePart(base.parts.bass, patch.parts?.bass),
       drums: mergePart(base.parts.drums, patch.parts?.drums),
     },
     userPresets: {
       synth: [...(patch.userPresets?.synth ?? base.userPresets.synth)],
+      chords: [...(patch.userPresets?.chords ?? base.userPresets.chords)],
       bass: [...(patch.userPresets?.bass ?? base.userPresets.bass)],
       drums: [...(patch.userPresets?.drums ?? base.userPresets.drums)],
     },

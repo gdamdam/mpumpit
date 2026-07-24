@@ -57,6 +57,7 @@ export interface PartState {
 /** Named custom presets saved by the user (persisted alongside the built-ins). */
 export interface UserPresets {
   synth: SynthPreset[];
+  chords: SynthPreset[];
   bass: SynthPreset[];
   drums: DrumKitPreset[];
 }

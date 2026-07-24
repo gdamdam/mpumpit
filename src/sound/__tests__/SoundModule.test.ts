@@ -655,3 +655,39 @@ describe("SoundModule — master output stage", () => {
     expect(engine2.callsTo("setMbExclude").at(-1)?.args).toEqual(["drums", true]);
   });
 });
+
+describe("SoundModule — chords part parity", () => {
+  it("exposes a chords part with a Default preset and SYNTH preset names", () => {
+    const sm = new SoundModule();
+    const st = sm.getState();
+    expect(st.parts.chords).toBeDefined();
+    expect(st.parts.chords.preset).toBe("Default");
+    // CHORDS reuses SYNTH_PRESETS, so its preset list matches synth's.
+    expect(sm.getPresetNames("chords")).toEqual(sm.getPresetNames("synth"));
+  });
+
+  it("hydrates chords live params from its named preset", () => {
+    const sm = new SoundModule();
+    expect(sm.getState().parts.chords.params).toBeDefined();
+  });
+
+  it("gives chords a pan/gate channel strip (no eq/hpf, like synth/bass)", () => {
+    const sm = new SoundModule();
+    const chain = sm.getEffectChain("chords");
+    expect(chain.items.map((i) => i.id)).toEqual(["pan", "gate"]);
+  });
+
+  it("loads an old 3-part saved state and backfills a default chords part", () => {
+    const old = { parts: {
+      synth: { preset: "Default", volume: 0.8, strip: undefined },
+      bass:  { preset: "Default", volume: 0.8, strip: undefined },
+      drums: { preset: "Default", volume: 0.8, strip: undefined },
+    } } as unknown;
+    const sm = new SoundModule({ initialState: old as never });
+    const st = sm.getState();
+    expect(st.parts.chords).toBeDefined();
+    expect(st.parts.chords.preset).toBe("Default");
+    expect(st.parts.chords.volume).toBe(0.8);
+    expect(sm.getState().userPresets.chords).toEqual([]);
+  });
+});

@@ -14,7 +14,7 @@ import { FxPanel } from "./components/FxPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { EditorView } from "./views/EditorView";
 
-const PART_LABEL: Record<Part, string> = { synth: "SYNTH", bass: "BASS", drums: "DRUMS" };
+const PART_LABEL: Record<Part, string> = { synth: "SYNTH", chords: "CHORDS", bass: "BASS", drums: "DRUMS" };
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 // Scientific pitch notation (MIDI 60 = C4, A440 = A4).
@@ -44,7 +44,7 @@ export function App({ createEngine }: AppProps = {}) {
   const [permission, setPermission] = useState<MidiPermissionState>("idle");
   const [inputs, setInputs] = useState<MidiInputInfo[]>([]);
   const [selectedInput, setSelectedInput] = useState<string>(ALL_INPUTS);
-  const [activity, setActivity] = useState<Record<Part, boolean>>({ synth: false, bass: false, drums: false });
+  const [activity, setActivity] = useState<Record<Part, boolean>>({ synth: false, chords: false, bass: false, drums: false });
   const [midiBlink, setMidiBlink] = useState(false);
   const [openFx, setOpenFx] = useState<FxTarget | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -222,7 +222,7 @@ export function App({ createEngine }: AppProps = {}) {
     }
   };
 
-  const channels = router?.getChannels() ?? { synth: 1, bass: 2, drums: 10 };
+  const channels = router?.getChannels() ?? { synth: 1, chords: 3, bass: 2, drums: 10 };
   const setChannel = (part: Part, ch: number) => {
     if (!router || Number.isNaN(ch)) return;
     router.setChannels({ [part]: Math.max(1, Math.min(16, ch)) });

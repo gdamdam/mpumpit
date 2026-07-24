@@ -132,3 +132,22 @@ describe("normalizeSoundState — malformed user presets (task 3)", () => {
     expect((v as unknown as Record<string, unknown>).junk).toBeUndefined(); // unknown key dropped
   });
 });
+
+describe("normalizeSoundState — chords part backward compat", () => {
+  it("normalizes a chords part when present", () => {
+    const out = normalizeSoundState({ parts: { chords: { preset: "Acid", volume: 0.5 } } });
+    expect(out.parts?.chords).toBeDefined();
+    expect(out.parts?.chords?.preset).toBe("Acid");
+  });
+
+  it("gives userPresets a chords array (old saves omit it)", () => {
+    const out = normalizeSoundState({ userPresets: { synth: [], bass: [], drums: [] } });
+    expect(out.userPresets?.chords).toEqual([]);
+  });
+
+  it("loads an OLD 3-part save without a chords part and does not invent one", () => {
+    // normalizeSoundState only returns present parts; mergeState backfills chords.
+    const out = normalizeSoundState({ parts: { synth: { preset: "Default", volume: 0.8 } } });
+    expect(out.parts?.chords).toBeUndefined(); // absent here…
+  });
+});

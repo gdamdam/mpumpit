@@ -77,6 +77,15 @@ describe("MidiRouter — channel routing", () => {
     expect(r.getReceivedCount()).toBe(48); // every clock counted
     expect(raw).toBe(2); // signalled twice, not 48× → rx updates without a solid LED
   });
+
+  it("routes channel 3 to chords on its default channel", () => {
+    router.handleMessage("in", noteOn(3, 60));
+    expect(sink.ons).toEqual([["chords", 60, 100]]);
+  });
+
+  it("keeps the 4-part default channel map (synth1 chords3 bass2 drums10)", () => {
+    expect(router.getChannels()).toEqual({ synth: 1, chords: 3, bass: 2, drums: 10 });
+  });
 });
 
 describe("MidiRouter — direct (keyboard) routing shares ownership", () => {
