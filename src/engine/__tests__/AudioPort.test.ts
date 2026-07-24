@@ -155,3 +155,66 @@ describe("AudioPort — worklet declares 3 stereo outputs and routes chords to o
     expect(node.port.messages.some((m) => m.type === "split" && m.channel === 2 && m.on === true)).toBe(true);
   });
 });
+
+// Parity fix: sidechain duck must pump CHORDS (channel 2) exactly like synth/bass
+// by default, and honor its own excludeChords toggle in both engine paths.
+describe("AudioPort — sidechain duck pumps CHORDS (channel 2) with parity to synth/bass", () => {
+  let restore: () => void;
+  beforeEach(() => { vi.useFakeTimers(); restore = installFakeAudioContext(); });
+  afterEach(() => { restore(); vi.useRealTimers(); });
+
+  const busGainOf = (port: AudioPort, ch: number): { value: number } =>
+    (port as unknown as { channelBuses: Map<number, { gain: { value: number } }> }).channelBuses.get(ch)!.gain;
+
+  it("non-worklet path: ducks chords (ch2) by default, same as synth/bass", () => {
+    const port = new AudioPort();
+    port.setChannelEQ(2, 0, 0, 0); // materializes the channel-2 bus
+    port.setSidechainDuck(true);
+    port.setChannelVolume(2, 1);
+
+    port.noteOn(9, 36, 127); // kick on the drum channel triggers the duck
+
+    expect(busGainOf(port, 2).value).toBeCloseTo(0.3); // ducked to 1 - depth (0.7 default)
+  });
+
+  it("non-worklet path: excludeChords exempts ch2 from ducking", () => {
+    const port = new AudioPort();
+    port.setChannelEQ(2, 0, 0, 0);
+    port.setSidechainDuck(true);
+    port.setDuckParams(0.85, 0.04, undefined, undefined, true); // excludeChords
+    port.setChannelVolume(2, 1);
+
+    port.noteOn(9, 36, 127);
+
+    expect(busGainOf(port, 2).value).toBeCloseTo(1); // untouched
+  });
+});
+
+describe("AudioPort — worklet path: sidechain duck posts channel 2 (chords) with parity to synth/bass", () => {
+  let restore: () => void;
+  beforeEach(() => { vi.useFakeTimers(); restore = installFakeAudioContext({ worklet: true }); });
+  afterEach(() => { restore(); vi.useRealTimers(); });
+
+  it("posts a duck message for channel 2 by default (no exclude)", async () => {
+    const port = new AudioPort();
+    await new Promise<void>((resolve) => port.onPolySynthSettled(resolve));
+    port.setSidechainDuck(true);
+
+    port.noteOn(9, 36, 127);
+
+    const node = (port as unknown as { polySynth: { port: { messages: Array<Record<string, unknown>> } } }).polySynth;
+    expect(node.port.messages.some((m) => m.type === "duck" && m.channel === 2)).toBe(true);
+  });
+
+  it("does NOT post a duck message for channel 2 when excludeChords is set", async () => {
+    const port = new AudioPort();
+    await new Promise<void>((resolve) => port.onPolySynthSettled(resolve));
+    port.setSidechainDuck(true);
+    port.setDuckParams(0.85, 0.04, undefined, undefined, true); // excludeChords
+
+    port.noteOn(9, 36, 127);
+
+    const node = (port as unknown as { polySynth: { port: { messages: Array<Record<string, unknown>> } } }).polySynth;
+    expect(node.port.messages.some((m) => m.type === "duck" && m.channel === 2)).toBe(false);
+  });
+});

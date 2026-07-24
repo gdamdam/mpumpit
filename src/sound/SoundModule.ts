@@ -36,7 +36,7 @@ export interface AudioEngine {
   setEffectOrder(order: EffectName[]): void;
   getEffectOrder(): EffectName[];
   setSidechainDuck(on: boolean): void;
-  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean): void;
+  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean, excludeChords?: boolean): void;
   setBpm(bpm: number): void;
   setChannelVolume(ch: number, v: number): void;
   setChannelEQ(ch: number, low: number, mid: number, high: number): void;
@@ -958,7 +958,7 @@ export class SoundModule {
     if (id === "duck") {
       const d = this.state.effects.duck;
       this.engine.setSidechainDuck(!!d.on);
-      this.engine.setDuckParams(d.depth, d.release, d.excludeBass, d.excludeSynth);
+      this.engine.setDuckParams(d.depth, d.release, d.excludeBass, d.excludeSynth, d.excludeChords);
     } else {
       this.engine.setEffect(id, { ...this.state.effects[id] });
     }

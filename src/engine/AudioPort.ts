@@ -1890,11 +1890,12 @@ export class AudioPort {
   }
 
   /** Set duck parameters: depth (0-1) and release (seconds). */
-  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean): void {
+  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean, excludeChords?: boolean): void {
     this.duckDepth = Math.max(0, Math.min(1, depth));
     this.duckRelease = Math.max(0.01, Math.min(0.5, release));
     if (excludeBass !== undefined)  (this.fx.duck as { excludeBass?: boolean }).excludeBass  = excludeBass;
     if (excludeSynth !== undefined) (this.fx.duck as { excludeSynth?: boolean }).excludeSynth = excludeSynth;
+    if (excludeChords !== undefined) (this.fx.duck as { excludeChords?: boolean }).excludeChords = excludeChords;
     if (this.polySynth) {
       this.polySynth.port.postMessage({ type: "duck_params", depth: this.duckDepth, release: this.duckRelease });
     }
@@ -2316,24 +2317,27 @@ export class AudioPort {
     }
   };
   private applyDuck(time?: number): void {
-    const excludeBass  = !!(this.fx.duck as { excludeBass?: boolean }).excludeBass;
-    const excludeSynth = !!(this.fx.duck as { excludeSynth?: boolean }).excludeSynth;
+    const excludeBass   = !!(this.fx.duck as { excludeBass?: boolean }).excludeBass;
+    const excludeSynth  = !!(this.fx.duck as { excludeSynth?: boolean }).excludeSynth;
+    const excludeChords = !!(this.fx.duck as { excludeChords?: boolean }).excludeChords;
     // Schedule the duck at the kick's actual audio-clock hit time (same model as
     // the note queue) so the pump lines up with the kick instead of firing when
     // the step was queued, up to a lookahead window early. Undefined => now.
     const when = time !== undefined ? perfToCtx(this.ctx, time) : undefined;
     // Worklet path: send duck message per non-excluded, non-drum channel
     if (this.polySynth) {
-      if (!excludeSynth) this.polySynth.port.postMessage({ type: "duck", channel: 0, depth: this.duckDepth, when });
-      if (!excludeBass)  this.polySynth.port.postMessage({ type: "duck", channel: 1, depth: this.duckDepth, when });
+      if (!excludeSynth)  this.polySynth.port.postMessage({ type: "duck", channel: 0, depth: this.duckDepth, when });
+      if (!excludeBass)   this.polySynth.port.postMessage({ type: "duck", channel: 1, depth: this.duckDepth, when });
+      if (!excludeChords) this.polySynth.port.postMessage({ type: "duck", channel: 2, depth: this.duckDepth, when });
     }
     // Web Audio path: set bus gain for non-worklet, non-excluded channels
     const duckTo = 1 - this.duckDepth;
     for (const [ch, bus] of this.channelBuses) {
       if (ch === DRUM_CH) continue;
       if (this.polySynth) continue; // handled by worklet above
-      if (ch === 0 && excludeSynth) continue;
-      if (ch === 1 && excludeBass)  continue;
+      if (ch === 0 && excludeSynth)  continue;
+      if (ch === 1 && excludeBass)   continue;
+      if (ch === 2 && excludeChords) continue;
       const vol = this.channelVolumes.get(ch) ?? 1;
       if (vol <= 0) continue;
       bus.gain.value = vol * duckTo;

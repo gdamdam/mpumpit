@@ -23,7 +23,7 @@ export class FakeAudioEngine implements AudioEngine {
   failResume = false;
   private settledCb: (() => void) | null = null;
   sidechainDuck = false;
-  duckParams: { depth: number; release: number; excludeBass?: boolean; excludeSynth?: boolean } = { depth: 0.85, release: 0.04 };
+  duckParams: { depth: number; release: number; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean } = { depth: 0.85, release: 0.04 };
 
   private rec(method: string, ...args: unknown[]) {
     this.calls.push({ method, args });
@@ -45,9 +45,9 @@ export class FakeAudioEngine implements AudioEngine {
   setEffectOrder(order: EffectName[]) { this.rec("setEffectOrder", order); this.order = [...order]; }
   getEffectOrder(): EffectName[] { return this.order; }
   setSidechainDuck(on: boolean) { this.rec("setSidechainDuck", on); this.sidechainDuck = on; }
-  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean) {
-    this.rec("setDuckParams", depth, release, excludeBass, excludeSynth);
-    this.duckParams = { depth, release, excludeBass, excludeSynth };
+  setDuckParams(depth: number, release: number, excludeBass?: boolean, excludeSynth?: boolean, excludeChords?: boolean) {
+    this.rec("setDuckParams", depth, release, excludeBass, excludeSynth, excludeChords);
+    this.duckParams = { depth, release, excludeBass, excludeSynth, excludeChords };
   }
   setBpm(bpm: number) { this.rec("setBpm", bpm); }
   setChannelVolume(ch: number, v: number) { this.rec("setChannelVolume", ch, v); }
