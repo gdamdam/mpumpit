@@ -35,7 +35,7 @@ function safeClamp(v: number, lo: number, hi: number, fallback = lo): number {
 }
 
 /** Logical FX source identity. In worklet mode synth+bass share one output ("synthBass"). */
-type SourceKey = "drums" | "synth" | "bass" | "synthBass";
+type SourceKey = "drums" | "synth" | "bass" | "chords" | "synthBass";
 
 interface FxGroup {
   patternKey: string;
@@ -157,9 +157,13 @@ export class AudioPort {
   /** Set by close() so a late, in-flight worklet load is ignored after teardown. */
   private isClosed = false;
   /** Whether the worklet is currently rendering bass to output[1] (split mode). Mirrors the worklet's flag. */
-  private workletSplitMode = false;
+  private workletSplitBass = false;
+  /** Whether the worklet is currently rendering chords to output[2] (split mode). Mirrors the worklet's flag. */
+  private workletSplitChords = false;
   /** Current FX bus that the worklet's output[1] (bass) is connected to, or null when unused. */
   private workletOut1Target: GainNode | null = null;
+  /** Current FX bus the worklet's output[2] (chords) is connected to, or null when unused. */
+  private workletOut2Target: GainNode | null = null;
   /** Default FX input bus — sources connect here when their group has the common exclude pattern. */
   private defaultGroupBus!: GainNode;
   /** Secondary FX input buses, keyed by exclude-pattern string (one per divergent group). */
@@ -416,13 +420,14 @@ export class AudioPort {
       this.workletsLoaded = false;
     }
     if (this.isClosed) return; // teardown raced the load — drop it
-    // Create persistent poly-synth node. Two stereo outputs: output[0] carries
-    // the full mix by default; when split mode is on, output[1] carries bass
-    // (channel 1) so the FX router can route synth and bass independently.
+    // Create persistent poly-synth node. Three stereo outputs: output[0] carries
+    // the full mix by default; when split mode is on for a channel, output[1]
+    // carries bass (channel 1) and/or output[2] carries chords (channel 2) so the
+    // FX router can route synth/bass/chords independently.
     this.polySynth = new AudioWorkletNode(this.ctx, "poly-synth", {
       numberOfInputs: 0,
-      numberOfOutputs: 2,
-      outputChannelCount: [2, 2],
+      numberOfOutputs: 3,
+      outputChannelCount: [2, 2, 2],
     });
     // Connect poly-synth to the default FX input bus (rebuildFxChain reroutes if needed)
     this.polySynth.connect(this.defaultGroupBus);
@@ -680,7 +685,7 @@ export class AudioPort {
   setEffect<K extends EffectName>(name: K, params: Partial<EffectParams[K]>): void {
     const prev = this.fx[name];
     const onChanged = "on" in params && (params as { on?: boolean }).on !== (prev as { on?: boolean }).on;
-    const excludeChanged = "excludeDrums" in params || "excludeBass" in params || "excludeSynth" in params;
+    const excludeChanged = "excludeDrums" in params || "excludeBass" in params || "excludeSynth" in params || "excludeChords" in params;
     this.fx[name] = { ...prev, ...params } as EffectParams[K];
     // All param changes (params, on/off, exclude flips) flow through rebuildFxChain.
     // Exclude flips alter chain topology (groups), so they use the same debounce as on/off.
@@ -688,20 +693,23 @@ export class AudioPort {
     this.fxRebuildTimer = window.setTimeout(() => this.rebuildFxChain(), (onChanged || excludeChanged) ? 100 : 200);
   }
 
-  /** True when an active effect excludes synth but not bass (or vice-versa), so
-   *  the two must render through separate FX chains instead of sharing one. */
-  private synthBassNeedsSplit(activeEffects: EffectName[]): boolean {
+  /** True when an active effect excludes `channel` differently from synth, so it
+   *  must render through a separate FX chain (its own worklet output) instead of
+   *  sharing output[0] with synth. */
+  private channelNeedsSplit(channel: "bass" | "chords", activeEffects: EffectName[]): boolean {
+    const key = channel === "bass" ? "excludeBass" : "excludeChords";
     return activeEffects.some(n => {
       const p = this.fx[n] as Record<string, unknown>;
-      return !!p.excludeSynth !== !!p.excludeBass;
+      return !!p[key] !== !!p.excludeSynth;
     });
   }
 
-  /** Tell the worklet whether to render bass to its second output (split mode). */
-  private setWorkletSplit(split: boolean): void {
-    if (!this.polySynth || this.workletSplitMode === split) return;
-    this.workletSplitMode = split;
-    this.polySynth.port.postMessage({ type: "split", on: split });
+  /** Tell the worklet whether to render a channel to its dedicated output (split). */
+  private setWorkletSplit(channel: 1 | 2, split: boolean): void {
+    if (!this.polySynth) return;
+    if (channel === 1) { if (this.workletSplitBass === split) return; this.workletSplitBass = split; }
+    else { if (this.workletSplitChords === split) return; this.workletSplitChords = split; }
+    this.polySynth.port.postMessage({ type: "split", channel, on: split });
   }
 
   /** Connect/disconnect the worklet's bass output (output index 1) to an FX bus. */
@@ -716,6 +724,18 @@ export class AudioPort {
     this.workletOut1Target = bus;
   }
 
+  /** Connect/disconnect the worklet's chords output (output index 2) to an FX bus. */
+  private setWorkletOut2(bus: GainNode | null): void {
+    if (!this.polySynth || this.workletOut2Target === bus) return;
+    if (this.workletOut2Target) {
+      try { this.polySynth.disconnect(this.workletOut2Target, 2); } catch { /* */ }
+    }
+    if (bus) {
+      try { this.polySynth.connect(bus, 2); } catch { /* */ }
+    }
+    this.workletOut2Target = bus;
+  }
+
   /** Compute exclude pattern per source, group sources by identical patterns.
    *  One group per unique pattern; each group gets its own FX chain in rebuildFxChain.
    *  Drums are skipped entirely when MB-bypassed (they go straight to driveGain, never through FX). */
@@ -726,11 +746,11 @@ export class AudioPort {
     // separately when an active effect treats them differently. Only then do we
     // split the worklet (output[0]=synth, output[1]=bass); otherwise they stay
     // merged as one "synthBass" source and the default path is untouched.
-    const split = workletActive && this.synthBassNeedsSplit(activeEffects);
-    const synthBassKeys: SourceKey[] = split ? ["synth", "bass"] : ["synthBass"];
+    const splitBass = workletActive && this.channelNeedsSplit("bass", activeEffects);
+    const synthBassKeys: SourceKey[] = splitBass ? ["synth", "bass"] : ["synthBass"];
     const sourceKeys: SourceKey[] = workletActive
-      ? (this.mbExcludeDrums ? synthBassKeys : ["drums", ...synthBassKeys])
-      : (this.mbExcludeDrums ? ["synth", "bass"] : ["drums", "synth", "bass"]);
+      ? (this.mbExcludeDrums ? [...synthBassKeys, "chords"] : ["drums", ...synthBassKeys, "chords"])
+      : (this.mbExcludeDrums ? ["synth", "bass", "chords"] : ["drums", "synth", "bass", "chords"]);
 
     const patternFor = (key: SourceKey): string => {
       const bits: string[] = [];
@@ -740,6 +760,7 @@ export class AudioPort {
         if (key === "drums") excluded = !!p.excludeDrums;
         else if (key === "synth") excluded = !!p.excludeSynth;
         else if (key === "bass") excluded = !!p.excludeBass;
+        else if (key === "chords") excluded = !!p.excludeChords;
         else excluded = !!p.excludeSynth || !!p.excludeBass; // synthBass: OR (worklet shares output)
       bits.push(excluded ? "1" : "0");
       }
@@ -772,6 +793,7 @@ export class AudioPort {
     if (key === "synthBass") return this.polySynth;
     if (key === "synth")     return this.channelPanners.get(0) ?? null;
     if (key === "bass")      return this.channelPanners.get(1) ?? null;
+    if (key === "chords")    return this.channelPanners.get(2) ?? null;
     return null;
   }
 
@@ -807,21 +829,30 @@ export class AudioPort {
         const synthBus = target.get("synth");
         const bassBus = target.get("bass") ?? null;
         reroute("synthBass", this.polySynth, synthBus); // output[0] (default index)
+        this.setWorkletSplit(1, bassBus !== null);
         this.setWorkletOut1(bassBus);
         // Hygiene: keep unused channel panners attached (no signal in worklet mode).
         reroute("synth", this.channelPanners.get(0) ?? null, synthBus);
         reroute("bass",  this.channelPanners.get(1) ?? null, synthBus);
       } else {
         const bus = target.get("synthBass");
+        this.setWorkletSplit(1, false);
         this.setWorkletOut1(null); // bass folds back into output[0]
         reroute("synthBass", this.polySynth, bus); // output[0]
         // Also keep unused panners pointed at the synthBass bus (no signal, just graph hygiene)
         reroute("synth", this.channelPanners.get(0) ?? null, bus);
         reroute("bass",  this.channelPanners.get(1) ?? null, bus);
       }
+      // Chords: output[2]. Split to its own bus when its group differs from output[0].
+      const chordsBus = target.get("chords") ?? null;
+      const chordsSplit = chordsBus !== null && chordsBus !== target.get("synthBass") && chordsBus !== target.get("synth");
+      this.setWorkletSplit(2, chordsSplit);
+      this.setWorkletOut2(chordsSplit ? chordsBus : null);
+      reroute("chords", this.channelPanners.get(2) ?? null, chordsBus ?? undefined); // graph hygiene (no signal in worklet mode)
     } else {
       reroute("synth", this.sourceNode("synth"), target.get("synth"));
       reroute("bass",  this.sourceNode("bass"),  target.get("bass"));
+      reroute("chords", this.sourceNode("chords"), target.get("chords"));
     }
   }
 
@@ -883,10 +914,11 @@ export class AudioPort {
     // Compute groups from current excludes
     const groups = this.computeFxGroups();
 
-    // Keep the worklet's split flag in sync with the routing decision before we
-    // wire its outputs below (routeSourcesToGroups connects output[1] when split).
+    // Keep the worklet's split flags in sync with the routing decision before we
+    // wire its outputs below (routeSourcesToGroups connects output[1]/output[2] when split).
     const activeEffects = this.effectOrder.filter(n => this.fx[n].on);
-    this.setWorkletSplit(!!this.polySynth && this.synthBassNeedsSplit(activeEffects));
+    this.setWorkletSplit(1, !!this.polySynth && this.channelNeedsSplit("bass", activeEffects));
+    this.setWorkletSplit(2, !!this.polySynth && this.channelNeedsSplit("chords", activeEffects));
 
     // Assign buses: first group uses defaultGroupBus; others use secondary buses (reused across
     // rebuilds when their patternKey persists, so sources on those patterns don't migrate).
@@ -1383,14 +1415,15 @@ export class AudioPort {
       const isDrums = ch === DRUM_CH;
       const isBass = ch === 1;
       const isSynth = ch === 0;
+      const isChords = ch === 2;
       const eqLow = this.ctx.createBiquadFilter();
       eqLow.type = "lowshelf";
       eqLow.frequency.value = isDrums ? 80 : 200; // drums: boost sub (50Hz) not mud (200Hz)
       eqLow.gain.value = isDrums ? 2 : 0; // gentle drum sub boost (F-M per-hit handles most compensation)
       const eqMid = this.ctx.createBiquadFilter();
       eqMid.type = "peaking";
-      eqMid.frequency.value = (isBass || isSynth) ? 300 : 1000; // bass+synth: target mud zone
-      eqMid.Q.value = (isBass || isSynth) ? 1.2 : 0.7;
+      eqMid.frequency.value = (isBass || isSynth || isChords) ? 300 : 1000; // bass+synth: target mud zone
+      eqMid.Q.value = (isBass || isSynth || isChords) ? 1.2 : 0.7;
       eqMid.gain.value = isBass ? -0.5 : isSynth ? -0.5 : 0; // light bass mud cut (preserve punch + harmonics)
       const eqHigh = this.ctx.createBiquadFilter();
       eqHigh.type = "highshelf"; eqHigh.frequency.value = 5000;
@@ -1407,8 +1440,8 @@ export class AudioPort {
         this.channelHPFs.set(ch, hp);
         bus.connect(hp);
         hp.connect(eqLow);
-      } else if (isSynth) {
-        // Synth: HP at 40Hz (kick owns sub)
+      } else if (isSynth || isChords) {
+        // Synth/chords: HP at 40Hz (kick owns sub)
         const hp = this.ctx.createBiquadFilter();
         hp.type = "highpass"; hp.frequency.value = 40; hp.Q.value = 0.7;
         this.channelHPFs.set(ch, hp);
@@ -1427,7 +1460,7 @@ export class AudioPort {
         panner.connect(this.mbDrumsDirectOut!);
       } else {
         panner.connect(this.defaultGroupBus);
-        const key: SourceKey | null = ch === DRUM_CH ? "drums" : ch === 0 ? "synth" : ch === 1 ? "bass" : null;
+        const key: SourceKey | null = ch === DRUM_CH ? "drums" : ch === 0 ? "synth" : ch === 1 ? "bass" : ch === 2 ? "chords" : null;
         if (key) this.sourceFxTarget.set(key, this.defaultGroupBus);
       }
       this.channelPanners.set(ch, panner);

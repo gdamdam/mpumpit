@@ -40,6 +40,51 @@ function makeNode(): any {
   });
 }
 
+/** Fake AudioWorkletNode: records constructor options and connect/postMessage
+ *  calls so tests can assert the output-count contract and Out2/split plumbing
+ *  (AudioPort's `numberOfOutputs`, `setWorkletOut2`, `setWorkletSplit(1|2, …)`)
+ *  without a real audio thread. Opt-in via installFakeAudioContext({ worklet: true }) —
+ *  see fakeWorkletEnabled below. */
+export class FakeAudioWorkletNode {
+  numberOfInputs: number;
+  numberOfOutputs: number;
+  outputChannelCount: number[];
+  /** Every connect(dest, output) call, recorded as [dest, outputIndex]. */
+  connects: Array<[unknown, number]> = [];
+  port: {
+    messages: Array<Record<string, unknown>>;
+    onmessage: ((e: unknown) => void) | null;
+    postMessage: (msg: Record<string, unknown>) => void;
+  };
+
+  constructor(_ctx: unknown, _name: string, options?: { numberOfInputs?: number; numberOfOutputs?: number; outputChannelCount?: number[] }) {
+    this.numberOfInputs = options?.numberOfInputs ?? 1;
+    this.numberOfOutputs = options?.numberOfOutputs ?? 1;
+    this.outputChannelCount = options?.outputChannelCount ?? [2];
+    const messages: Array<Record<string, unknown>> = [];
+    this.port = {
+      messages,
+      onmessage: null,
+      postMessage: (msg: Record<string, unknown>) => { messages.push(msg); },
+    };
+  }
+
+  connect(dest: unknown, output = 0): unknown {
+    this.connects.push([dest, output]);
+    return dest;
+  }
+
+  disconnect(dest?: unknown, output?: number): void {
+    if (dest === undefined) { this.connects = []; return; }
+    this.connects = this.connects.filter(([d, o]) => !(d === dest && (output === undefined || o === output)));
+  }
+}
+
+/** Module-level switch: when true, FakeAudioContext.audioWorklet is present
+ *  (so AudioPort's loadWorklets() proceeds) and window.AudioWorkletNode is the
+ *  fake above. Off by default — existing tests rely on polySynth staying null. */
+let fakeWorkletEnabled = false;
+
 function makeBuffer(channels: number, length: number, sampleRate: number) {
   const ch = Math.max(1, channels);
   const data = Array.from({ length: ch }, () => new Float32Array(length));
@@ -56,9 +101,14 @@ export class FakeAudioContext {
   state: "running" | "suspended" | "closed" = "running";
   destination = makeNode();
   onstatechange: (() => void) | null = null;
-  // Absent on purpose: AudioPort.loadWorklets() bails via failPolySynth() when
-  // audioWorklet is falsy, so we needn't mock AudioWorkletNode.
-  audioWorklet: undefined = undefined;
+  // Undefined by default: AudioPort.loadWorklets() bails via failPolySynth() when
+  // audioWorklet is falsy, so most tests needn't mock AudioWorkletNode at all.
+  // installFakeAudioContext({ worklet: true }) flips fakeWorkletEnabled so this
+  // getter returns a stub addModule, letting loadWorklets() proceed to construct
+  // the (also faked) AudioWorkletNode.
+  get audioWorklet(): { addModule: () => Promise<void> } | undefined {
+    return fakeWorkletEnabled ? { addModule: () => Promise.resolve() } : undefined;
+  }
   constructor(_opts?: unknown) {}
   createGain() { return makeNode(); }
   createBiquadFilter() { return makeNode(); }
@@ -83,12 +133,25 @@ export class FakeAudioContext {
 }
 
 /** Install FakeAudioContext as window.AudioContext/webkitAudioContext.
- *  Returns a restore function. */
-export function installFakeAudioContext(): () => void {
+ *  Pass `{ worklet: true }` to also enable `ctx.audioWorklet` and register a fake
+ *  `window.AudioWorkletNode`, letting AudioPort's poly-synth worklet "load" and
+ *  its output[0..2]/split plumbing become exercisable in tests. Default (no
+ *  options) preserves prior behavior: audioWorklet is undefined, polySynth stays
+ *  null, existing tests are unaffected. Returns a restore function. */
+export function installFakeAudioContext(opts?: { worklet?: boolean }): () => void {
   const w = window as unknown as Record<string, unknown>;
   const prevAC = w.AudioContext;
   const prevWk = w.webkitAudioContext;
+  const prevAWN = w.AudioWorkletNode;
+  const prevWorkletEnabled = fakeWorkletEnabled;
   w.AudioContext = FakeAudioContext;
   w.webkitAudioContext = FakeAudioContext;
-  return () => { w.AudioContext = prevAC; w.webkitAudioContext = prevWk; };
+  fakeWorkletEnabled = !!opts?.worklet;
+  if (opts?.worklet) w.AudioWorkletNode = FakeAudioWorkletNode;
+  return () => {
+    w.AudioContext = prevAC;
+    w.webkitAudioContext = prevWk;
+    w.AudioWorkletNode = prevAWN;
+    fakeWorkletEnabled = prevWorkletEnabled;
+  };
 }

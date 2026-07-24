@@ -329,12 +329,12 @@ export function EffectEditor({ name, params, onUpdate, onClose, onReset, drumsIn
                 />
               )}
             </div>
-            {excludeRow([["excludeDrums", "DRUMS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
+            {excludeRow([["excludeDrums", "DRUMS"], ["excludeChords", "CHORDS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
           </>
         )}
 
         {/* Duck: exclude channels from being ducked (no drums — the kick triggers it) */}
-        {name === "duck" && excludeRow([["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
+        {name === "duck" && excludeRow([["excludeChords", "CHORDS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
 
         {/* Reverb: type selector (room/hall/plate/spring) */}
         {name === "reverb" && (
@@ -346,7 +346,7 @@ export function EffectEditor({ name, params, onUpdate, onClose, onReset, drumsIn
         )}
 
         {/* Channel exclusion — all effects except delay (has its own above) and duck (no drums) */}
-        {name !== "delay" && name !== "duck" && excludeRow([["excludeDrums", "DRUMS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
+        {name !== "delay" && name !== "duck" && excludeRow([["excludeDrums", "DRUMS"], ["excludeChords", "CHORDS"], ["excludeBass", "BASS"], ["excludeSynth", "SYNTH"]] as const)}
 
         {/* Tremolo: shape selector */}
         {name === "tremolo" && (

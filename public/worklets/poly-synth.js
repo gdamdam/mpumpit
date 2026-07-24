@@ -209,10 +209,11 @@ class PolySynthProcessor extends AudioWorkletProcessor {
     this._schedDepth = new Float32Array(this._schedCap);
     this._schedCount = 0;
 
-    // Split mode: when on, bass (channel 1) renders to output[1] so the host
-    // FX router can route synth and bass through separate effect chains. Off
-    // by default — everything sums into output[0] exactly as before.
-    this._splitMode = false;
+    // Per-channel split routing. When _chSplit[ch] is set, that channel's voices
+    // render to a dedicated output (ch1 -> output[1], ch2 -> output[2]) so the host
+    // FX router can route it independently. Off => folds into output[0], bit-identical
+    // to the non-split path. Only ch1 (bass) and ch2 (chords) are separable.
+    this._chSplit = new Uint8Array(16);
 
     // Per-channel trance gate state
     this._chGateOn = new Uint8Array(16);               // 0=off, 1=on
@@ -261,7 +262,10 @@ class PolySynthProcessor extends AudioWorkletProcessor {
       case "pan": if (msg.channel !== undefined) this._chPan[msg.channel] = msg.pan; break;
       case "mute": if (msg.channel !== undefined) this._chMuted[msg.channel] = msg.muted ? 1 : 0; break;
       case "bpm": this._bpm = msg.bpm; break;
-      case "split": this._splitMode = !!msg.on; break;
+      case "split":
+        // Backward-compat: a bare { on } (no channel) means bass (ch1).
+        this._chSplit[msg.channel !== undefined ? msg.channel : 1] = msg.on ? 1 : 0;
+        break;
       case "gate": this._gateFraction = msg.fraction; break;
       case "duck": {
         // Kick hit. With an absolute `when`, queue it so the duck lands on the
@@ -507,14 +511,16 @@ class PolySynthProcessor extends AudioWorkletProcessor {
     const N = outL.length;
     const isStereo = outR !== outL;
 
-    // Split mode: bass (channel 1) renders to a second output so the FX router
-    // can route it independently. When off, out1L stays null and the entire
-    // mix flows through output[0] — bit-identical to the non-split path.
-    const split = this._splitMode;
-    const out1 = split ? outputs[1] : null;
+    // Per-channel split: bass (ch1) -> output[1], chords (ch2) -> output[2].
+    // When a channel isn't split, its voices fold into output[0] (bit-identical).
+    const out1 = outputs[1] || null;
     const out1L = (out1 && out1[0]) ? out1[0] : null;
     const out1R = out1L ? (out1.length > 1 ? out1[1] : out1L) : null;
     const isStereo1 = out1L ? (out1R !== out1L) : false;
+    const out2 = outputs[2] || null;
+    const out2L = (out2 && out2[0]) ? out2[0] : null;
+    const out2R = out2L ? (out2.length > 1 ? out2[1] : out2L) : null;
+    const isStereo2 = out2L ? (out2R !== out2L) : false;
 
     if (!this._srReady) {
       this._sr = sampleRate; this._invSr = 1 / sampleRate;
@@ -526,6 +532,7 @@ class PolySynthProcessor extends AudioWorkletProcessor {
 
     for (let s = 0; s < N; s++) { outL[s] = 0; if (isStereo) outR[s] = 0; }
     if (out1L) for (let s = 0; s < N; s++) { out1L[s] = 0; if (isStereo1) out1R[s] = 0; }
+    if (out2L) for (let s = 0; s < N; s++) { out2L[s] = 0; if (isStereo2) out2R[s] = 0; }
 
     const invSr = this._invSr;
     const sr = this._sr;
@@ -574,13 +581,14 @@ class PolySynthProcessor extends AudioWorkletProcessor {
       // Skip muted channels
       if (this._chMuted[ch]) continue;
 
-      // In split mode, bass (channel 1) accumulates into the second output;
-      // everything else stays on output[0]. ch is constant per voice, so this
-      // is chosen once outside the sample loop.
-      const toBass = out1L !== null && ch === 1;
-      const vOutL = toBass ? out1L : outL;
-      const vOutR = toBass ? out1R : outR;
-      const vStereo = toBass ? isStereo1 : isStereo;
+      // Per-channel split: ch1 -> output[1], ch2 -> output[2] when that channel is
+      // split AND the output is connected; otherwise fold into output[0]. ch is
+      // constant per voice, so this is chosen once outside the sample loop.
+      const split1 = out1L !== null && this._chSplit[ch] && ch === 1;
+      const split2 = out2L !== null && this._chSplit[ch] && ch === 2;
+      const vOutL = split1 ? out1L : split2 ? out2L : outL;
+      const vOutR = split1 ? out1R : split2 ? out2R : outR;
+      const vStereo = split1 ? isStereo1 : split2 ? isStereo2 : isStereo;
 
       const freq = this._freq[v];
       const vel = this._vel[v];
@@ -923,6 +931,10 @@ class PolySynthProcessor extends AudioWorkletProcessor {
     if (out1L) for (let s = 0; s < N; s++) {
       out1L[s] = Math.tanh(out1L[s]);
       if (isStereo1) out1R[s] = Math.tanh(out1R[s]);
+    }
+    if (out2L) for (let s = 0; s < N; s++) {
+      out2L[s] = Math.tanh(out2L[s]);
+      if (isStereo2) out2R[s] = Math.tanh(out2R[s]);
     }
 
     return true;

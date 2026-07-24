@@ -99,3 +99,59 @@ describe("AudioPort — setChannelVolume matches the duck's direct .value write 
     expect(gain.value).toBeCloseTo(0.5); // recovers to the NEW volume
   });
 });
+
+// Regression/new coverage for Phase 2 (CHORDS gets its own FX-routable source key).
+// This exercises the NON-worklet branch: the default mock has no AudioWorkletNode,
+// so polySynth stays null and chords routes via its channel-2 panner (sourceNode).
+describe("AudioPort — chords FX routing (non-worklet path)", () => {
+  let restore: () => void;
+  beforeEach(() => { vi.useFakeTimers(); restore = installFakeAudioContext(); });
+  afterEach(() => { restore(); vi.useRealTimers(); });
+
+  it("routes chords to its own FX group bus when an effect excludes chords but not synth", () => {
+    const port = new AudioPort();
+    port.setEffect("reverb", { on: true, excludeChords: true });
+    // AudioPort also runs a repeating setInterval heartbeat, so vi.runAllTimers()
+    // would loop forever; advance past the 100ms exclude-change debounce instead.
+    vi.advanceTimersByTime(150);
+    const groups = (port as unknown as { computeFxGroups(): Array<{ sourceKeys: string[] }> }).computeFxGroups();
+    const chordsGroup = groups.find((g) => g.sourceKeys.includes("chords"));
+    const synthGroup = groups.find((g) => g.sourceKeys.includes("synth"));
+    expect(chordsGroup).toBeDefined();
+    expect(chordsGroup).not.toBe(synthGroup); // chords diverges → separate group
+  });
+});
+
+// Phase 2: worklet gets a 3rd stereo output (output[2]) dedicated to chords, so
+// chords can be routed through its own FX chain independently of synth/bass.
+// Requires the worklet-enabled fake (installFakeAudioContext({ worklet: true })),
+// since the default mock leaves polySynth null (see describe block above).
+describe("AudioPort — worklet declares 3 stereo outputs and routes chords to output[2]", () => {
+  let restore: () => void;
+  beforeEach(() => { vi.useFakeTimers(); restore = installFakeAudioContext({ worklet: true }); });
+  afterEach(() => { restore(); vi.useRealTimers(); });
+
+  it("creates the poly-synth node with numberOfOutputs 3 and [2,2,2] channels", async () => {
+    const port = new AudioPort();
+    // loadWorklets() is async (awaits addModule twice) before polySynth is created;
+    // onPolySynthSettled is AudioPort's real public hook for "worklet load settled".
+    await new Promise<void>((resolve) => port.onPolySynthSettled(resolve));
+    const node = (port as unknown as { polySynth: { numberOfOutputs: number; outputChannelCount: number[] } }).polySynth;
+    expect(node.numberOfOutputs).toBe(3);
+    expect(node.outputChannelCount).toEqual([2, 2, 2]);
+  });
+
+  it("connects output[2] to a bus and sends split{channel:2} when an effect excludes chords", async () => {
+    const port = new AudioPort();
+    await new Promise<void>((resolve) => port.onPolySynthSettled(resolve));
+    port.setEffect("reverb", { on: true, excludeChords: true });
+    // AudioPort also runs a repeating setInterval heartbeat, so vi.runAllTimers()
+    // would loop forever; advance past the 100ms exclude-change debounce instead.
+    vi.advanceTimersByTime(150);
+    const node = (port as unknown as {
+      polySynth: { connects: Array<[unknown, number]>; port: { messages: Array<Record<string, unknown>> } };
+    }).polySynth;
+    expect(node.connects.some(([, out]) => out === 2)).toBe(true);
+    expect(node.port.messages.some((m) => m.type === "split" && m.channel === 2 && m.on === true)).toBe(true);
+  });
+});

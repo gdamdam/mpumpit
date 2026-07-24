@@ -157,17 +157,17 @@ export const DRUM_NOTES: readonly number[] = [36, 37, 38, 42, 46, 47, 49, 50, 51
 // ── Effects ────────────────────────────────────────────────────────────────
 
 export interface EffectParams {
-  delay: { on: boolean; time: number; feedback: number; mix: number; sync: boolean; division: string; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  distortion: { on: boolean; drive: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  reverb: { on: boolean; decay: number; mix: number; type: string; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  compressor: { on: boolean; threshold: number; ratio: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  highpass: { on: boolean; cutoff: number; q: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  chorus: { on: boolean; rate: number; depth: number; mix: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  phaser: { on: boolean; rate: number; depth: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  bitcrusher: { on: boolean; bits: number; crushRate?: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  duck: { on: boolean; depth: number; release: number; excludeBass?: boolean; excludeSynth?: boolean };
-  flanger: { on: boolean; rate: number; depth: number; feedback: number; mix: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
-  tremolo: { on: boolean; rate: number; depth: number; shape: string; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean };
+  delay: { on: boolean; time: number; feedback: number; mix: number; sync: boolean; division: string; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  distortion: { on: boolean; drive: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  reverb: { on: boolean; decay: number; mix: number; type: string; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  compressor: { on: boolean; threshold: number; ratio: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  highpass: { on: boolean; cutoff: number; q: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  chorus: { on: boolean; rate: number; depth: number; mix: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  phaser: { on: boolean; rate: number; depth: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  bitcrusher: { on: boolean; bits: number; crushRate?: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  duck: { on: boolean; depth: number; release: number; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  flanger: { on: boolean; rate: number; depth: number; feedback: number; mix: number; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
+  tremolo: { on: boolean; rate: number; depth: number; shape: string; excludeDrums?: boolean; excludeBass?: boolean; excludeSynth?: boolean; excludeChords?: boolean };
 }
 
 export type EffectName = keyof EffectParams;
