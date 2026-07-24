@@ -359,6 +359,7 @@ export class SoundModule {
     }
     if (this.engine) {
       try { this.engine.allNotesOff(PART_TO_AUDIO_CH.synth); } catch { /* ignore */ }
+      try { this.engine.allNotesOff(PART_TO_AUDIO_CH.chords); } catch { /* ignore */ }
       try { this.engine.allNotesOff(PART_TO_AUDIO_CH.bass); } catch { /* ignore */ }
       try { this.engine.allNotesOff(PART_TO_AUDIO_CH.drums); } catch { /* ignore */ }
       try { this.engine.close(); } catch { /* ignore */ }
@@ -439,6 +440,7 @@ export class SoundModule {
     this.pendingHeld.clear();
     if (!this.engine) return;
     this.engine.allNotesOff(PART_TO_AUDIO_CH.synth);
+    this.engine.allNotesOff(PART_TO_AUDIO_CH.chords);
     this.engine.allNotesOff(PART_TO_AUDIO_CH.bass);
     this.engine.stopAllDrums();
     if (hard) {

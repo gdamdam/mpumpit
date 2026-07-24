@@ -137,12 +137,20 @@ describe("SoundModule — presets, volumes, tempo", () => {
 });
 
 describe("SoundModule — panic", () => {
-  it("stops synth/bass voices AND drum one-shots", async () => {
+  it("stops synth/chords/bass voices AND drum one-shots", async () => {
     const { engine, sm } = make();
     await sm.initialize();
     sm.panic();
-    expect(engine.callsTo("allNotesOff").map((c) => c.args[0])).toEqual([0, 1]);
+    expect(engine.callsTo("allNotesOff").map((c) => c.args[0])).toEqual([0, 2, 1]); // synth, chords, bass
     expect(engine.callsTo("stopAllDrums")).toHaveLength(1); // drums aren't covered by allNotesOff
+  });
+
+  it("silences held chords notes on panic", async () => {
+    const { engine, sm } = make();
+    await sm.initialize();
+    sm.noteOn("chords", 64, 100); // held note
+    sm.panic();
+    expect(engine.callsTo("allNotesOff").map((c) => c.args[0])).toEqual([0, 2, 1]); // synth, chords, bass
   });
 
   it("hard panic flushes FX tails and mutes→restores master", async () => {
