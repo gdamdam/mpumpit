@@ -3,6 +3,24 @@
 All notable changes to mpumpit are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-07-24
+
+### Added
+- **CHORDS — a 4th instrument part.** mpumpit now exposes a fourth polyphonic
+  part (default MIDI channel 3), alongside SYNTH · BASS · DRUMS, so a full
+  4‑lane midip set (DRUMS · BASS · CHORDS · SYNTH) can be auditioned through a
+  single port. CHORDS has full parity: its own preset (sharing the synth preset
+  library), volume, pan, and channel strip (pan/gate).
+- **Independent master‑FX routing for CHORDS.** A dedicated 3rd poly‑synth
+  worklet output bus lets CHORDS carry its own master‑FX **Applies‑to** routing
+  — every effect (and the sidechain duck) has an **EXCL. CHORDS** toggle, so
+  CHORDS can be excluded from, or ducked by, effects independently of SYNTH.
+
+### Notes
+- Backward compatible: existing 3‑part saved settings load unchanged and
+  backfill a default CHORDS part; the `mpumpit.settings.v1` storage key is
+  unchanged. PANIC and teardown now silence CHORDS along with the other parts.
+
 ## [1.2.4] — 2026-07-13
 
 ### Fixed
